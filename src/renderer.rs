@@ -322,64 +322,67 @@ impl PipelineBuilder {
         &self,
         (width, height): (u32, u32),
         layout: vk::PipelineLayout,
-    ) -> VkResult<Owned<vk::Pipeline>> {
-        unsafe {
-            Owned::create((
-                self.cache.as_raw(),
-                &vk::GraphicsPipelineCreateInfo::builder()
-                    .stages(&self.stages)
-                    .vertex_input_state(
-                        &vk::PipelineVertexInputStateCreateInfo::builder()
-                            .vertex_attribute_descriptions(&self.vertex_input_attributes)
-                            .vertex_binding_descriptions(&[
-                                vk::VertexInputBindingDescription::builder()
-                                    .binding(0)
-                                    .stride(self.vertex_size)
-                                    .input_rate(vk::VertexInputRate::VERTEX)
-                                    .build(),
-                            ])
-                            .build(),
-                    )
-                    .input_assembly_state(
-                        &vk::PipelineInputAssemblyStateCreateInfo::builder()
-                            .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
-                            .build(),
-                    )
-                    .viewport_state(
-                        &vk::PipelineViewportStateCreateInfo::builder()
-                            .viewports(&[vk::Viewport::builder()
-                                .width(width as f32)
-                                .height(height as f32)
-                                .min_depth(0.0)
-                                .max_depth(1.0)
-                                .build()])
-                            .scissors(&[vk::Rect2D::builder()
-                                .extent(vk::Extent2D { width, height })
-                                .build()])
-                            .build(),
-                    )
-                    .rasterization_state(
-                        &vk::PipelineRasterizationStateCreateInfo::builder()
-                            .line_width(1.0)
-                            .build(),
-                    )
-                    .multisample_state(
-                        &vk::PipelineMultisampleStateCreateInfo::builder()
-                            .rasterization_samples(vk::SampleCountFlags::TYPE_1)
-                            .build(),
-                    )
-                    .color_blend_state(
-                        &vk::PipelineColorBlendStateCreateInfo::builder()
-                            .attachments(&[vk::PipelineColorBlendAttachmentState::builder()
-                                .color_write_mask(vk::ColorComponentFlags::all())
-                                .build()])
-                            .build(),
-                    )
-                    .layout(layout)
-                    .render_pass(self.render_pass)
-                    .subpass(0)
-                    .build(),
-            ))
-        }
+    ) -> VkResult<Pipeline> {
+        self.cache.create_pipeline(
+            &vk::GraphicsPipelineCreateInfo::builder()
+                .stages(&self.stages)
+                .vertex_input_state(
+                    &vk::PipelineVertexInputStateCreateInfo::builder()
+                        .vertex_attribute_descriptions(&self.vertex_input_attributes)
+                        .vertex_binding_descriptions(&[vk::VertexInputBindingDescription::builder(
+                        )
+                        .binding(0)
+                        .stride(self.vertex_size)
+                        .input_rate(vk::VertexInputRate::VERTEX)
+                        .build()])
+                        .build(),
+                )
+                .input_assembly_state(
+                    &vk::PipelineInputAssemblyStateCreateInfo::builder()
+                        .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
+                        .build(),
+                )
+                .viewport_state(
+                    &vk::PipelineViewportStateCreateInfo::builder()
+                        .viewports(&[vk::Viewport::builder()
+                            .width(width as f32)
+                            .height(height as f32)
+                            .min_depth(0.0)
+                            .max_depth(1.0)
+                            .build()])
+                        .scissors(&[vk::Rect2D::builder()
+                            .extent(vk::Extent2D { width, height })
+                            .build()])
+                        .build(),
+                )
+                .rasterization_state(
+                    &vk::PipelineRasterizationStateCreateInfo::builder()
+                        .line_width(1.0)
+                        .build(),
+                )
+                .multisample_state(
+                    &vk::PipelineMultisampleStateCreateInfo::builder()
+                        .rasterization_samples(vk::SampleCountFlags::TYPE_1)
+                        .build(),
+                )
+                .color_blend_state(
+                    &vk::PipelineColorBlendStateCreateInfo::builder()
+                        .attachments(&[vk::PipelineColorBlendAttachmentState::builder()
+                            .color_write_mask(vk::ColorComponentFlags::all())
+                            .blend_enable(true)
+                            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+                            .src_color_blend_factor(vk::BlendFactor::SRC_COLOR)
+                            .color_blend_op(vk::BlendOp::ADD)
+                            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+                            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+                            .alpha_blend_op(vk::BlendOp::ADD)
+                            .build()])
+                        .build(),
+                )
+                .layout(layout)
+                .render_pass(self.render_pass)
+                .subpass(0)
+                .build(),
+        )
     }
 }

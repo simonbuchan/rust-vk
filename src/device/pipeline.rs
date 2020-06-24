@@ -1,5 +1,37 @@
 use super::*;
 
+impl RawHandle for vk::PipelineLayout {}
+impl Create<&vk::PipelineLayoutCreateInfo> for vk::PipelineLayout {
+    unsafe fn create(info: &vk::PipelineLayoutCreateInfo) -> VkResult<Self> {
+        DEVICE.create_pipeline_layout(info, ALLOC)
+    }
+}
+impl Destroy for vk::PipelineLayout {
+    unsafe fn destroy(self) {
+        DEVICE.destroy_pipeline_layout(self, ALLOC)
+    }
+}
+pub struct PipelineLayout(Owned<vk::PipelineLayout>);
+
+impl AsRef<vk::PipelineLayout> for PipelineLayout {
+    fn as_ref(&self) -> &vk::PipelineLayout {
+        self.0.as_ref()
+    }
+}
+
+impl PipelineLayout {
+    pub fn create(set_layouts: &[vk::DescriptorSetLayout]) -> VkResult<Self> {
+        let owned = unsafe {
+            Owned::create(
+                &vk::PipelineLayoutCreateInfo::builder()
+                    .set_layouts(set_layouts)
+                    .build(),
+            )?
+        };
+        Ok(Self(owned))
+    }
+}
+
 impl RawHandle for vk::PipelineCache {}
 impl Create<&vk::PipelineCacheCreateInfo> for vk::PipelineCache {
     unsafe fn create(info: &vk::PipelineCacheCreateInfo) -> VkResult<Self> {
@@ -24,52 +56,27 @@ impl PipelineCache {
         let owned = unsafe { Owned::create(&vk::PipelineCacheCreateInfo::default()) }?;
         Ok(Self(owned))
     }
-}
 
-impl RawHandle for vk::PipelineLayout {}
-impl Create<&vk::PipelineLayoutCreateInfo> for vk::PipelineLayout {
-    unsafe fn create(info: &vk::PipelineLayoutCreateInfo) -> VkResult<Self> {
-        DEVICE.create_pipeline_layout(info, ALLOC)
-    }
-}
-impl Destroy for vk::PipelineLayout {
-    unsafe fn destroy(self) {
-        DEVICE.destroy_pipeline_layout(self, ALLOC)
-    }
-}
-pub struct PipelineLayout(vk::PipelineLayout);
-
-impl RawHandle for vk::Pipeline {}
-impl CreateVec<(vk::PipelineCache, &[vk::GraphicsPipelineCreateInfo])> for vk::Pipeline {
-    unsafe fn create_vec(
-        info: (vk::PipelineCache, &[vk::GraphicsPipelineCreateInfo]),
-    ) -> VkResult<Vec<Self>> {
-        match DEVICE.create_graphics_pipelines(info.0, info.1, ALLOC) {
-            Ok(result) => Ok(result),
-            Err((pipelines, err)) => {
-                for p in pipelines {
-                    if p != vk::Pipeline::null() {
-                        p.destroy()
-                    }
-                }
-                Err(err)
-            }
+    pub fn create_pipeline(&self, infos: &vk::GraphicsPipelineCreateInfo) -> VkResult<Pipeline> {
+        match unsafe {
+            DEVICE.create_graphics_pipelines(self.as_raw(), std::slice::from_ref(infos), ALLOC)
+        } {
+            Ok(results) => Ok(Pipeline(unsafe { Owned::from_raw(results[0]) })),
+            Err((_results, err)) => Err(err),
         }
     }
 }
-impl Create<&vk::GraphicsPipelineCreateInfo> for vk::Pipeline {
-    unsafe fn create(info: &vk::GraphicsPipelineCreateInfo) -> VkResult<Self> {
-        Self::create((vk::PipelineCache::null(), info))
-    }
-}
-impl Create<(vk::PipelineCache, &vk::GraphicsPipelineCreateInfo)> for vk::Pipeline {
-    unsafe fn create(info: (vk::PipelineCache, &vk::GraphicsPipelineCreateInfo)) -> VkResult<Self> {
-        Ok(Self::create_vec((info.0, std::slice::from_ref(info.1)))?[0])
-    }
-}
+
+impl RawHandle for vk::Pipeline {}
 impl Destroy for vk::Pipeline {
     unsafe fn destroy(self) {
         DEVICE.destroy_pipeline(self, ALLOC)
     }
 }
-pub struct Pipeline(vk::Pipeline);
+pub struct Pipeline(Owned<vk::Pipeline>);
+
+impl AsRef<vk::Pipeline> for Pipeline {
+    fn as_ref(&self) -> &vk::Pipeline {
+        self.0.as_ref()
+    }
+}

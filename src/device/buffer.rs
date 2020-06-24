@@ -64,7 +64,10 @@ impl AsRef<vk::Buffer> for Buffer {
 }
 
 impl Buffer {
-    pub fn create_with<T: Copy>(usage: vk::BufferUsageFlags, source: &[T]) -> VkResult<Self> {
+    pub fn create_with<T: Copy + ?Sized>(
+        usage: vk::BufferUsageFlags,
+        source: &T,
+    ) -> VkResult<Self> {
         let buffer = Self::create(std::mem::size_of_val(source) as vk::DeviceSize, usage)?;
         buffer.write(0, source)?;
         Ok(buffer)
@@ -87,7 +90,7 @@ impl Buffer {
         })
     }
 
-    pub fn write<T: Copy>(&self, offset: vk::DeviceSize, source: &[T]) -> VkResult<()> {
+    pub fn write<T: Copy + ?Sized>(&self, offset: vk::DeviceSize, source: &T) -> VkResult<()> {
         self.memory.write(offset, source)
     }
 }

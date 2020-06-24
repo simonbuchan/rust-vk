@@ -142,6 +142,7 @@ impl CommandBufferRenderPassRecorder {
     pub fn bind_descriptor_set(
         &self,
         pipeline_layout: vk::PipelineLayout,
+        set_index: u32,
         descriptor_set: vk::DescriptorSet,
     ) {
         unsafe {
@@ -149,7 +150,7 @@ impl CommandBufferRenderPassRecorder {
                 self.as_raw(),
                 vk::PipelineBindPoint::GRAPHICS,
                 pipeline_layout,
-                0,
+                set_index,
                 &[descriptor_set],
                 &[],
             );

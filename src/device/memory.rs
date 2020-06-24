@@ -140,26 +140,38 @@ impl Memory {
         Ok(Self(owner))
     }
 
-    pub fn map(&self, offset: vk::DeviceSize, size: vk::DeviceSize) -> VkResult<MemoryMapping> {
+    pub fn map(&self, offset: vk::DeviceSize, size: usize) -> VkResult<MemoryMapping> {
         unsafe {
-            let host_memory =
-                DEVICE.map_memory(self.as_raw(), offset, size, vk::MemoryMapFlags::empty())?;
+            let ptr = DEVICE.map_memory(
+                self.as_raw(),
+                offset,
+                size as vk::DeviceSize,
+                vk::MemoryMapFlags::empty(),
+            )?;
             Ok(MemoryMapping {
-                host_memory,
+                ptr,
+                size,
                 device_memory: self.as_raw(),
             })
         }
     }
 
-    pub fn write<T: Copy>(&self, offset: vk::DeviceSize, source: &[T]) -> VkResult<()> {
-        let mapping = self.map(offset, size_of_val(source))?;
-        unsafe { mapping.write(0, source) };
+    pub fn write<T: Copy + ?Sized>(&self, offset: vk::DeviceSize, source: &T) -> VkResult<()> {
+        let mut mapping = self.map(offset, std::mem::size_of_val(source))?;
+        mapping.write(0, source);
+        Ok(())
+    }
+
+    pub fn write_slice<T: Copy>(&self, offset: vk::DeviceSize, source: &[T]) -> VkResult<()> {
+        let mut mapping = self.map(offset, std::mem::size_of_val(source))?;
+        mapping.write_slice(0, source);
         Ok(())
     }
 }
 
 pub struct MemoryMapping {
-    host_memory: *mut c_void,
+    ptr: *mut c_void,
+    size: usize,
     device_memory: vk::DeviceMemory,
 }
 
@@ -170,9 +182,21 @@ impl Drop for MemoryMapping {
 }
 
 impl MemoryMapping {
-    pub unsafe fn write<T: Copy>(&self, offset: vk::DeviceSize, source: &[T]) {
-        let ptr = self.host_memory.offset(offset as isize).cast();
-        let buffer_data = std::slice::from_raw_parts_mut::<T>(ptr, source.len());
-        buffer_data.copy_from_slice(source);
+    pub fn write<T: Copy + ?Sized>(&mut self, offset: usize, src: &T) {
+        let len = std::mem::size_of_val(src);
+        assert!(offset + len <= self.size);
+        let ptr = unsafe { self.ptr.add(offset) };
+        unsafe { std::ptr::copy_nonoverlapping(src as *const T as *const c_void, ptr, len) };
+    }
+
+    pub fn slice<T: Copy>(&mut self, offset: usize, len: usize) -> &mut [T] {
+        assert!(offset + len <= self.size);
+        let ptr = unsafe { self.ptr.add(offset) }.cast();
+        unsafe { std::slice::from_raw_parts_mut::<T>(ptr, len) }
+    }
+
+    pub fn write_slice<T: Copy>(&mut self, offset: usize, source: &[T]) {
+        self.slice::<T>(offset, source.len())
+            .copy_from_slice(source);
     }
 }

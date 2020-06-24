@@ -4,13 +4,14 @@ use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
-use device::{AsRawHandle, CommandBuffer, CommandBufferRenderPassRecorder};
+use device::{AsRawHandle, CommandBuffer};
 use renderer::{PipelineBuilder, Renderer};
 
 mod device;
 mod globals;
 mod init;
 mod renderer;
+mod resources;
 
 fn main() {
     let event_loop = EventLoop::new();
@@ -38,84 +39,20 @@ fn main() {
     });
 }
 
-struct Mesh {
-    pub memory: device::Memory,
-    pub vertex_buffer: device::BufferObject,
-    pub index_buffer: device::BufferObject,
-    pub count: u32,
-}
-
-impl Mesh {
-    pub fn create<Vertex: Copy>(vertices: &[Vertex], indices: &[u32]) -> VkResult<Self> {
-        let vertex_buffer = device::BufferObject::create(
-            device::size_of_val(vertices),
-            vk::BufferUsageFlags::VERTEX_BUFFER,
-        )?;
-        let index_buffer = device::BufferObject::create(
-            device::size_of_val(indices),
-            vk::BufferUsageFlags::INDEX_BUFFER,
-        )?;
-
-        // compute combined memory requirements
-        let vertex_requirements = vertex_buffer.memory_requirements();
-        let index_requirements = index_buffer.memory_requirements();
-        let merged_size = vertex_requirements.size + index_requirements.size;
-
-        let vertices_offset = 0;
-        let indices_offset = vertex_requirements.size;
-
-        let memory = device::Memory::allocate_mappable(
-            merged_size,
-            device::MemoryTypeMask(
-                vertex_requirements.memory_type_bits & index_requirements.memory_type_bits,
-            ),
-        )?;
-
-        // write memory
-        let mapping = memory.map(0, merged_size)?;
-        unsafe {
-            mapping.write(vertices_offset, vertices);
-            mapping.write(indices_offset, indices);
-        }
-
-        // bind buffers to memory
-        vertex_buffer.bind_memory(&memory, vertices_offset)?;
-        index_buffer.bind_memory(&memory, indices_offset)?;
-
-        Ok(Self {
-            memory,
-            vertex_buffer,
-            index_buffer,
-            count: indices.len() as u32,
-        })
-    }
-
-    pub fn draw(&self, cmd: &CommandBufferRenderPassRecorder) {
-        cmd.bind_vertex_buffer(0, self.vertex_buffer.as_raw());
-        cmd.bind_index_buffer(self.index_buffer.as_raw());
-        cmd.draw_indexed(self.count);
-    }
-}
-
-pub struct Texture {
-    pub image: device::Image,
-    pub image_view: device::ImageView,
-    pub sampler: device::Sampler,
-}
-
 #[allow(dead_code)]
 struct MeshRenderer {
     window: Window,
     renderer: Renderer,
     surface: device::Owned<vk::SurfaceKHR>,
     pipeline_builder: PipelineBuilder,
-    pipeline: device::Owned<vk::Pipeline>,
-    pipeline_layout: device::Owned<vk::PipelineLayout>,
+    pipeline: device::Pipeline,
+    pipeline_layout: device::PipelineLayout,
     descriptor_pool: device::DescriptorPool,
-    descriptor_set: device::DescriptorSet,
+    mvp_set: device::DescriptorSet,
+    mesh_set: device::DescriptorSet,
     mvp_buffer: device::Buffer,
-    mesh: Mesh,
-    texture: Texture,
+    mesh: resources::Mesh,
+    texture: resources::Texture,
 }
 
 impl MeshRenderer {
@@ -144,7 +81,7 @@ impl MeshRenderer {
             .add_fragment(
                 r#"
                     #version 460
-                    layout(set = 0, binding = 1) uniform sampler2D u_tex;
+                    layout(set = 1, binding = 0) uniform sampler2D u_tex;
                     layout(location = 0) in vec2 v_uv;
                     layout(location = 1) in vec4 v_col;
                     layout(location = 0) out vec4 o_col;
@@ -156,65 +93,43 @@ impl MeshRenderer {
 
         let mvp_buffer = device::Buffer::create_with::<[[f32; 4]; 4]>(
             vk::BufferUsageFlags::UNIFORM_BUFFER,
-            &[[
+            &[
                 [2., 0., 0., 0.],
                 [0., 2., 0., 0.],
                 [0., 0., 1., 0.],
                 [-1., -1., 0., 1.],
-            ]],
+            ],
         )?;
 
-        const IMAGE_SIZE: (u32, u32) = (128, 128);
-        let image = device::Image::create_2d(
-            IMAGE_SIZE,
-            vk::Format::R8G8B8A8_UNORM,
-            vk::ImageUsageFlags::SAMPLED,
-            vk::ImageLayout::PREINITIALIZED,
-            device::MemoryTypeMask::mappable(),
-        )?;
+        let texture = resources::Texture::create_2d(128, 128)?;
 
-        {
-            let layout = image.object.color_subresource_layout();
-            let map = image.memory.map(layout.offset, layout.size)?;
-            for i in 0..IMAGE_SIZE.1 {
-                let v = ((if i / 8 % 2 == 0 {
-                    i
-                } else {
-                    IMAGE_SIZE.1 - i - 1
-                }) * 256
-                    / IMAGE_SIZE.1) as u8;
-                unsafe {
-                    map.write::<[u8; 4]>(
-                        layout.row_pitch * i as vk::DeviceSize,
-                        &[[v, v, v, 255u8]; IMAGE_SIZE.0 as usize],
-                    )
-                };
+        let mut upload = texture.begin_upload().unwrap();
+        for y in 0..texture.height {
+            let row = upload.row(y);
+            for x in 0..texture.width {
+                let is_stripe = y / 8 % 2 == 0;
+                let stripe_y = if is_stripe { y } else { texture.height - y - 1 };
+                let a = (x * 256 / texture.width) as u8;
+                let v = (stripe_y * 256 / texture.height) as u8;
+                row[x as usize] = [v, v, v, a];
             }
         }
+        upload
+            .upload_before(vk::PipelineStageFlags::FRAGMENT_SHADER)
+            .unwrap();
 
-        let image_view = device::ImageView::create_2d(
-            image.object.as_raw(),
-            vk::Format::R8G8B8A8_UNORM,
-            vk::ImageAspectFlags::COLOR,
-        )?;
-
-        let sampler = device::Sampler::nearest()?;
-
-        let set_layout = device::DescriptorSetLayout::builder()
+        let mvp_set_layout = device::DescriptorSetLayout::builder()
             .add_uniform_buffer(0, vk::ShaderStageFlags::VERTEX)
-            .add_combined_image_sampler(1, vk::ShaderStageFlags::FRAGMENT)
+            .build()?;
+        let mesh_set_layout = device::DescriptorSetLayout::builder()
+            .add_combined_image_sampler(0, vk::ShaderStageFlags::FRAGMENT)
             .build()?;
 
-        let pipeline_layout = unsafe {
-            device::Owned::<vk::PipelineLayout>::create(
-                &vk::PipelineLayoutCreateInfo::builder()
-                    .set_layouts(&[set_layout.as_raw()])
-                    .build(),
-            )?
-        };
+        let pipeline_layout =
+            device::PipelineLayout::create(&[mvp_set_layout.as_raw(), mesh_set_layout.as_raw()])?;
 
         let descriptor_pool = device::DescriptorPool::create(
-            1,
+            2,
             &[
                 vk::DescriptorPoolSize {
                     ty: vk::DescriptorType::UNIFORM_BUFFER,
@@ -227,46 +142,26 @@ impl MeshRenderer {
             ],
         )?;
 
-        let descriptor_set = descriptor_pool.allocate(set_layout.as_raw())?;
+        let mvp_set = descriptor_pool.allocate(mvp_set_layout.as_raw())?;
+        let mesh_set = descriptor_pool.allocate(mesh_set_layout.as_raw())?;
 
-        descriptor_set.update_buffer(
+        mvp_set.update_buffer(
             0,
             vk::DescriptorType::UNIFORM_BUFFER,
             mvp_buffer.as_raw(),
             0,
             64,
         );
-        descriptor_set.update_combined_image_sampler(
-            1,
-            sampler.as_raw(),
-            image_view.as_raw(),
+        mesh_set.update_combined_image_sampler(
+            0,
+            texture.sampler.as_raw(),
+            texture.image_view.as_raw(),
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         );
-        drop(set_layout);
-
-        let recorder = device::CommandBuffer::create()?;
-        recorder.image_memory_barrier(
-            vk::PipelineStageFlags::HOST,
-            vk::PipelineStageFlags::FRAGMENT_SHADER,
-            &vk::ImageMemoryBarrier::builder()
-                .src_access_mask(vk::AccessFlags::HOST_WRITE)
-                .dst_access_mask(vk::AccessFlags::SHADER_READ)
-                .old_layout(vk::ImageLayout::PREINITIALIZED)
-                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                .image(image.object.as_raw())
-                .subresource_range(
-                    vk::ImageSubresourceRange::builder()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .level_count(1)
-                        .layer_count(1)
-                        .build(),
-                ),
-        );
-        recorder.end()?.submit()?;
 
         let pipeline = pipeline_builder.build(renderer.size, pipeline_layout.as_raw())?;
 
-        let mesh = Mesh::create::<[f32; 7]>(
+        let mesh = resources::Mesh::create::<[f32; 7]>(
             &[
                 [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
                 [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0],
@@ -276,12 +171,6 @@ impl MeshRenderer {
             &[0, 1, 2, 2, 1, 3],
         )?;
 
-        let texture = Texture {
-            image,
-            image_view,
-            sampler,
-        };
-
         Ok(Self {
             window,
             surface,
@@ -290,7 +179,8 @@ impl MeshRenderer {
             pipeline_layout,
             pipeline,
             descriptor_pool,
-            descriptor_set,
+            mvp_set,
+            mesh_set,
             mvp_buffer,
             mesh,
             texture,
@@ -328,8 +218,11 @@ impl MeshRenderer {
         );
 
         recorder.bind_pipeline(self.pipeline.as_raw());
-        recorder.bind_descriptor_set(self.pipeline_layout.as_raw(), self.descriptor_set.as_raw());
+
+        recorder.bind_descriptor_set(self.pipeline_layout.as_raw(), 0, self.mvp_set.as_raw());
+        recorder.bind_descriptor_set(self.pipeline_layout.as_raw(), 1, self.mesh_set.as_raw());
         self.mesh.draw(&recorder);
+
         let command_buffer = recorder.end_render_pass().end()?;
         command_buffer.submit_after(
             self.renderer.image_acquire_semaphore.as_raw(),

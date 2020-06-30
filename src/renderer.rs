@@ -1,5 +1,7 @@
-use crate::{device::*, globals::*};
 use std::ffi::CStr;
+
+use crate::resources::Shader;
+use crate::{device::*, globals::*};
 
 pub struct Renderer {
     pub surface: vk::SurfaceKHR,
@@ -216,123 +218,98 @@ impl Swapchain {
     }
 }
 
-pub struct PipelineBuilder {
-    render_pass: vk::RenderPass,
-    compiler: shaderc::Compiler,
-    vertex_input_attributes: Vec<vk::VertexInputAttributeDescription>,
-    vertex_size: u32,
-    stages: Vec<vk::PipelineShaderStageCreateInfo>,
-    cache: PipelineCache,
+pub struct VertexLayout {
+    input_attributes: Vec<vk::VertexInputAttributeDescription>,
+    size: u32,
 }
 
 #[allow(dead_code)]
+impl VertexLayout {
+    pub fn new() -> Self {
+        Self {
+            input_attributes: vec![],
+            size: 0,
+        }
+    }
+
+    pub fn add_float(self, location: u32) -> Self {
+        self.add(location, vk::Format::R32_SFLOAT, 4)
+    }
+
+    pub fn add_vec2(self, location: u32) -> Self {
+        self.add(location, vk::Format::R32G32_SFLOAT, 8)
+    }
+
+    pub fn add_vec3(self, location: u32) -> Self {
+        self.add(location, vk::Format::R32G32B32_SFLOAT, 12)
+    }
+
+    pub fn add_vec4(self, location: u32) -> Self {
+        self.add(location, vk::Format::R32G32B32A32_SFLOAT, 16)
+    }
+
+    fn add(mut self, location: u32, format: vk::Format, size: u32) -> Self {
+        self.input_attributes.push(
+            vk::VertexInputAttributeDescription::builder()
+                .location(location)
+                .offset(self.size)
+                .binding(0)
+                .format(format)
+                .build(),
+        );
+        self.size += size;
+        self
+    }
+}
+
+pub struct PipelineBuilder {
+    render_pass: vk::RenderPass,
+    stages: Vec<Shader>,
+    cache: PipelineCache,
+}
+
 impl PipelineBuilder {
     pub fn new(render_pass: vk::RenderPass) -> VkResult<Self> {
         Ok(Self {
             render_pass,
-            compiler: shaderc::Compiler::new().unwrap(),
-            vertex_input_attributes: vec![],
-            vertex_size: 0,
             stages: vec![],
             cache: PipelineCache::create()?,
         })
     }
 
-    pub fn add_vertex_input_float(self, location: u32) -> Self {
-        self.add_vertex_input(location, vk::Format::R32_SFLOAT, 4)
-    }
-
-    pub fn add_vertex_input_vec2(self, location: u32) -> Self {
-        self.add_vertex_input(location, vk::Format::R32G32_SFLOAT, 8)
-    }
-
-    pub fn add_vertex_input_vec3(self, location: u32) -> Self {
-        self.add_vertex_input(location, vk::Format::R32G32B32_SFLOAT, 12)
-    }
-
-    pub fn add_vertex_input_vec4(self, location: u32) -> Self {
-        self.add_vertex_input(location, vk::Format::R32G32B32A32_SFLOAT, 16)
-    }
-
-    fn add_vertex_input(mut self, location: u32, format: vk::Format, size: u32) -> Self {
-        self.vertex_input_attributes.push(
-            vk::VertexInputAttributeDescription::builder()
-                .location(location)
-                .offset(self.vertex_size)
-                .binding(0)
-                .format(format)
-                .build(),
-        );
-        self.vertex_size += size;
-        self
-    }
-
-    pub fn add_vertex(self, source: &str) -> Self {
-        self.add_stage(
-            shaderc::ShaderKind::Vertex,
-            vk::ShaderStageFlags::VERTEX,
-            source,
-        )
-    }
-
-    pub fn add_fragment(self, source: &str) -> Self {
-        self.add_stage(
-            shaderc::ShaderKind::Fragment,
-            vk::ShaderStageFlags::FRAGMENT,
-            source,
-        )
-    }
-
-    fn add_stage(
-        mut self,
-        compiler_kind: shaderc::ShaderKind,
-        shader_stage: vk::ShaderStageFlags,
-        source: &str,
-    ) -> Self {
-        let output =
-            match self
-                .compiler
-                .compile_into_spirv(source, compiler_kind, "input", "main", None)
-            {
-                Err(error) => {
-                    eprintln!("{}", error);
-                    std::process::exit(2);
-                }
-                Ok(output) => output,
-            };
-        let module = unsafe {
-            DEVICE
-                .create_shader_module(
-                    &vk::ShaderModuleCreateInfo::builder().code(output.as_binary()),
-                    ALLOC,
-                )
-                .unwrap()
-        };
-        self.stages.push(
-            vk::PipelineShaderStageCreateInfo::builder()
-                .name(&unsafe { CStr::from_bytes_with_nul_unchecked(b"main\0") })
-                .stage(shader_stage)
-                .module(module)
-                .build(),
-        );
+    pub fn add_stage(mut self, shader: Shader) -> Self {
+        self.stages.push(shader);
         self
     }
 
     pub fn build(
         &self,
         (width, height): (u32, u32),
+        vertex_layout: &VertexLayout,
         layout: vk::PipelineLayout,
     ) -> VkResult<Pipeline> {
         self.cache.create_pipeline(
             &vk::GraphicsPipelineCreateInfo::builder()
-                .stages(&self.stages)
+                .stages(
+                    &self
+                        .stages
+                        .iter()
+                        .map(|stage| {
+                            vk::PipelineShaderStageCreateInfo::builder()
+                                .name(&CStr::from_bytes_with_nul(b"main\0").unwrap())
+                                .module(stage.as_raw())
+                                .stage(stage.stage())
+                                .build()
+                        })
+                        .collect::<Vec<_>>(),
+                )
                 .vertex_input_state(
                     &vk::PipelineVertexInputStateCreateInfo::builder()
-                        .vertex_attribute_descriptions(&self.vertex_input_attributes)
+                        .vertex_attribute_descriptions(&vertex_layout.input_attributes)
                         .vertex_binding_descriptions(&[vk::VertexInputBindingDescription::builder(
                         )
                         .binding(0)
-                        .stride(self.vertex_size)
+                        .stride(vertex_layout.size)
                         .input_rate(vk::VertexInputRate::VERTEX)
                         .build()])
                         .build(),

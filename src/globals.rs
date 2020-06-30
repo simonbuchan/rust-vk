@@ -6,8 +6,9 @@ pub use ash::prelude::*;
 pub use ash::version::*;
 pub use ash::vk;
 
+pub use crate::error::*;
+
 use crate::globals::ext::DEBUG_UTILS;
-use crate::init::InitResult;
 
 pub struct AssumeInit<T>(MaybeUninit<T>);
 
@@ -59,7 +60,7 @@ macro_rules! names {
     };
 }
 
-pub unsafe fn init_instance() -> InitResult<()> {
+pub unsafe fn init_instance() -> Result<()> {
     AssumeInit::init(&mut ENTRY, ash::Entry::new()?);
     AssumeInit::init(
         &mut INSTANCE,
@@ -101,9 +102,7 @@ pub unsafe fn init_instance() -> InitResult<()> {
     Ok(())
 }
 
-pub unsafe fn select_physical_device_and_graphics_queue(
-    surface: vk::SurfaceKHR,
-) -> InitResult<bool> {
+pub unsafe fn select_physical_device_and_graphics_queue(surface: vk::SurfaceKHR) -> Result<bool> {
     for pd in INSTANCE.enumerate_physical_devices()? {
         let qfps = INSTANCE.get_physical_device_queue_family_properties(pd);
         for (index, queue_family_props) in qfps.into_iter().enumerate() {
@@ -130,7 +129,7 @@ pub unsafe fn select_physical_device_and_graphics_queue(
     Ok(false)
 }
 
-pub unsafe fn init_device() -> InitResult<()> {
+pub unsafe fn init_device() -> Result<()> {
     AssumeInit::init(&mut DEVICE, {
         let info = vk::DeviceCreateInfo::builder()
             .enabled_extension_names(names![VK_KHR_swapchain])

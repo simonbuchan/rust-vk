@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use ash::prelude::VkResult;
 use ash::vk;
 use winit::event::{Event, WindowEvent};
@@ -5,9 +7,9 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::window::Window;
 
 use device::{AsRawHandle, CommandBuffer};
-use renderer::{PipelineBuilder, Renderer};
-
-use crate::renderer::VertexLayout;
+use error::*;
+use math::*;
+use renderer::{PipelineBuilder, Renderer, VertexLayout};
 
 mod device;
 mod ecs;
@@ -19,65 +21,44 @@ mod render_graph;
 mod renderer;
 mod resources;
 
-use error::*;
-use math::*;
-
 fn main() {
-    match Application::new() {
-        Ok(app) => app.run(),
-        Err(err) => {
-            eprintln!("Failed to initialize: {}", err);
-            std::process::exit(1);
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("{}", info);
+        std::process::exit(3);
+    }));
+
+    if let Err(err) = run() {
+        eprintln!("Failed: {}", err);
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
+    let event_loop = EventLoop::new();
+    let window = Window::new(&event_loop).map_err(Error::Window)?;
+    let surface = init::init(&window)?;
+    let mut render_context = RenderContext::new(window.inner_size().into(), surface)?;
+
+    std::mem::forget(window);
+
+    event_loop.run(move |event, _loop, flow| match event {
+        Event::NewEvents(..) => {
+            *flow = ControlFlow::Poll;
         }
-    }
-}
-
-struct Application {
-    event_loop: EventLoop<()>,
-    _window: Window,
-    render_context: RenderContext,
-}
-
-impl Application {
-    fn new() -> Result<Self> {
-        let event_loop = EventLoop::new();
-        let window = Window::new(&event_loop).map_err(Error::Window)?;
-        let surface = init::init(&window)?;
-
-        let render_context = RenderContext::new(window.inner_size().into(), surface)?;
-
-        Ok(Self {
-            event_loop,
-            _window: window,
-            render_context,
-        })
-    }
-
-    fn run(self) {
-        let Self {
-            event_loop,
-            _window,
-            mut render_context,
-        } = self;
-        event_loop.run(move |event, _loop, flow| match event {
-            Event::NewEvents(..) => {
-                *flow = ControlFlow::Wait;
+        Event::WindowEvent { event, .. } => match event {
+            WindowEvent::CloseRequested => {
+                *flow = ControlFlow::Exit;
             }
-            Event::WindowEvent { event, .. } => match event {
-                WindowEvent::CloseRequested => {
-                    *flow = ControlFlow::Exit;
-                }
-                WindowEvent::Resized(size) => {
-                    render_context.resize(size.into()).unwrap();
-                }
-                _ => {}
-            },
-            Event::RedrawRequested(..) => {
-                render_context.render().unwrap();
+            WindowEvent::Resized(size) => {
+                render_context.resize(size.into()).unwrap();
             }
             _ => {}
-        });
-    }
+        },
+        Event::MainEventsCleared => {
+            render_context.render().unwrap();
+        }
+        _ => {}
+    });
 }
 
 struct RenderContext {
@@ -87,6 +68,7 @@ struct RenderContext {
     pipeline: device::Pipeline,
     vertex_layout: VertexLayout,
     pipeline_layout: device::PipelineLayout,
+    start_time: Instant,
     scene: Scene,
 }
 
@@ -147,6 +129,8 @@ impl RenderContext {
 
         let scene = Scene::new(world_set_layout, draw_set_layout)?;
 
+        let start_time = Instant::now();
+
         Ok(Self {
             renderer,
             surface,
@@ -154,6 +138,7 @@ impl RenderContext {
             pipeline,
             vertex_layout,
             pipeline_layout,
+            start_time,
             scene,
         })
     }
@@ -192,7 +177,11 @@ impl RenderContext {
 
         recorder.bind_pipeline(self.pipeline.as_raw());
 
-        self.scene.render(&recorder, self.pipeline_layout.as_raw());
+        self.scene.render(
+            &recorder,
+            self.pipeline_layout.as_raw(),
+            self.start_time.elapsed(),
+        );
 
         let command_buffer = recorder.end_render_pass().end()?;
         command_buffer.submit_after(
@@ -217,8 +206,8 @@ struct Scene {
 
 impl Scene {
     pub fn new(
-        mvp_set_layout: device::DescriptorSetLayout,
-        mesh_set_layout: device::DescriptorSetLayout,
+        world_set_layout: device::DescriptorSetLayout,
+        draw_set_layout: device::DescriptorSetLayout,
     ) -> VkResult<Self> {
         let descriptor_pool = device::DescriptorPool::create(
             2,
@@ -234,19 +223,13 @@ impl Scene {
             ],
         )?;
 
-        let world_set = descriptor_pool.allocate(mvp_set_layout.as_raw())?;
-        let draw_set = descriptor_pool.allocate(mesh_set_layout.as_raw())?;
+        let world_set = descriptor_pool.allocate(world_set_layout.as_raw())?;
+        let draw_set = descriptor_pool.allocate(draw_set_layout.as_raw())?;
 
-        let mvp = Mat4::scale([0.3, 0.4, 0.05].into())
-            * Mat4::translate([0.0, 0.0, 2.0].into())
-            * Mat4::rotate(Quaternion::axis_angle(
-                Vec3::X_POS * std::f32::consts::FRAC_1_SQRT_2
-                    + Vec3::Y_POS * std::f32::consts::FRAC_1_SQRT_2,
-                std::f32::consts::FRAC_PI_4,
-            ));
-
-        let mvp_buffer =
-            device::Buffer::create_with::<Mat4>(vk::BufferUsageFlags::UNIFORM_BUFFER, &mvp)?;
+        let mvp_buffer = device::Buffer::create(
+            device::size_of::<Mat4>(),
+            vk::BufferUsageFlags::UNIFORM_BUFFER,
+        )?;
 
         let texture = resources::Texture::create_2d(128, 128)?;
 
@@ -343,7 +326,16 @@ impl Scene {
         &self,
         recorder: &device::CommandBufferRenderPassRecorder,
         pipeline_layout: vk::PipelineLayout,
+        elapsed: Duration,
     ) {
+        let mvp = Mat4::scale([0.3, 0.4, 0.05].into())
+            * Mat4::translate([0.0, 0.0, 2.0].into())
+            * Mat4::rotate(Quaternion::axis_angle(
+                Vec3::X_POS * std::f32::consts::FRAC_1_SQRT_2
+                    + Vec3::Y_POS * std::f32::consts::FRAC_1_SQRT_2,
+                elapsed.as_secs_f32(),
+            ));
+        self.mvp_buffer.write(0, &mvp);
         recorder.bind_descriptor_set(pipeline_layout, 0, self.world_set.as_raw());
         recorder.bind_descriptor_set(pipeline_layout, 1, self.draw_set.as_raw());
         self.mesh.draw(&recorder);

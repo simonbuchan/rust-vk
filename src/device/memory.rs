@@ -1,5 +1,9 @@
 use super::*;
 
+pub fn size_of<T>() -> vk::DeviceSize {
+    std::mem::size_of::<T>() as vk::DeviceSize
+}
+
 pub fn size_of_val<T: ?Sized>(val: &T) -> vk::DeviceSize {
     std::mem::size_of_val(val) as vk::DeviceSize
 }

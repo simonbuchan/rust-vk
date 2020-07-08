@@ -9,5 +9,4 @@ edition = "2018"
 [dependencies]
 ash = "0.31"
 winit = "0.22"
-#glsl = { version = "4", features = ["spirv"] }
 shaderc = "0.6"

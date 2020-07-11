@@ -335,6 +335,8 @@ impl PipelineBuilder {
                 .rasterization_state(
                     &vk::PipelineRasterizationStateCreateInfo::builder()
                         .line_width(1.0)
+                        .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
+                        .cull_mode(vk::CullModeFlags::BACK)
                         .build(),
                 )
                 .multisample_state(

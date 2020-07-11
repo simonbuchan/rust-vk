@@ -407,8 +407,8 @@ fn create_box_mesh() -> VkResult<resources::Mesh> {
             Vec4::from((tr + Vec3::ONE) * 0.5).into(),
         ));
         indices.push(index);
-        indices.push(index + 2);
         indices.push(index + 1);
+        indices.push(index + 2);
         indices.push(index + 3);
         indices.push(index + 2);
         indices.push(index + 1);

@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::ops::{Add, Mul, Neg};
+use std::ops::{Add, Div, Mul, Neg};
 
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Default)]
@@ -27,11 +27,37 @@ impl Add for Vec3 {
     }
 }
 
+impl Mul for Vec3 {
+    type Output = Vec3;
+    fn mul(self, rhs: Vec3) -> Vec3 {
+        let [lx, ly, lz] = self.0;
+        let [rx, ry, rz] = rhs.0;
+        [lx * rx, ly * ry, lz * rz].into()
+    }
+}
+
 impl Mul<f32> for Vec3 {
     type Output = Vec3;
     fn mul(self, rhs: f32) -> Vec3 {
         let [x, y, z] = self.0;
         [x * rhs, y * rhs, z * rhs].into()
+    }
+}
+
+impl Div for Vec3 {
+    type Output = Vec3;
+    fn div(self, rhs: Vec3) -> Vec3 {
+        let [lx, ly, lz] = self.0;
+        let [rx, ry, rz] = rhs.0;
+        [lx / rx, ly / ry, lz / rz].into()
+    }
+}
+
+impl Div<f32> for Vec3 {
+    type Output = Vec3;
+    fn div(self, rhs: f32) -> Vec3 {
+        let [x, y, z] = self.0;
+        [x / rhs, y / rhs, z / rhs].into()
     }
 }
 
@@ -52,6 +78,19 @@ impl Vec3 {
     pub const X_NEG: Self = Self([-1.0, 0.0, 0.0]);
     pub const Y_NEG: Self = Self([0.0, -1.0, 0.0]);
     pub const Z_NEG: Self = Self([0.0, 0.0, -1.0]);
+
+    pub fn len2(&self) -> f32 {
+        let [x, y, z] = self.0;
+        x * x + y * y + z * z
+    }
+
+    pub fn len(&self) -> f32 {
+        self.len2().sqrt()
+    }
+
+    pub fn normalized(self) -> Self {
+        self / self.len()
+    }
 
     pub fn dot(self, rhs: Self) -> f32 {
         let [lx, ly, lz] = self.0;
@@ -119,9 +158,23 @@ impl Vec4 {
 pub struct Quaternion([f32; 4]);
 
 impl Quaternion {
+    pub const ZERO: Self = Self([0.0, 0.0, 0.0, 1.0]);
+
     pub fn axis_angle(axis: Vec3, angle: f32) -> Self {
         let (s, c) = f32::sin_cos(angle / 2.0);
         (axis * s, c).into()
+    }
+
+    pub fn from_to(from: Vec3, to: Vec3) -> Self {
+        // Partial solution, doesn't handle 180deg rotations.
+        // Should negate something when the dot is negative (e.g. they are opposing)
+        let im = Vec3::cross(from, to);
+        let r = Vec3::dot(from, to) * f32::sqrt(from.len2() * to.len2());
+        (im / r, 1.0).into()
+    }
+
+    pub fn rotate(self, p: Vec3) -> Vec3 {
+        (self * Quaternion::from((p, 0.0)) * -self).im()
     }
 
     pub fn im(&self) -> Vec3 {
@@ -131,6 +184,10 @@ impl Quaternion {
 
     pub fn real(&self) -> f32 {
         self.0[3]
+    }
+
+    pub fn normalized(&self) -> Self {
+        (self.im() / self.real(), 1.0).into()
     }
 }
 
@@ -193,8 +250,8 @@ impl Default for Mat4 {
     }
 }
 
-impl From<(Vec4, Vec4, Vec4, Vec4)> for Mat4 {
-    fn from((x, y, z, w): (Vec4, Vec4, Vec4, Vec4)) -> Self {
+impl From<[Vec4; 4]> for Mat4 {
+    fn from([x, y, z, w]: [Vec4; 4]) -> Self {
         Self([x.0, y.0, z.0, w.0])
     }
 }

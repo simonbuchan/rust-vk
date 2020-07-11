@@ -55,6 +55,7 @@ fn run() -> Result<()> {
             _ => {}
         },
         Event::MainEventsCleared => {
+            render_context.update();
             render_context.render().unwrap();
         }
         _ => {}
@@ -150,7 +151,12 @@ impl RenderContext {
             &self.vertex_layout,
             self.pipeline_layout.as_raw(),
         )?;
+        self.scene.resize(size);
         Ok(())
+    }
+
+    pub fn update(&mut self) {
+        self.scene.update(self.start_time.elapsed());
     }
 
     pub fn render(&mut self) -> VkResult<()> {
@@ -177,11 +183,7 @@ impl RenderContext {
 
         recorder.bind_pipeline(self.pipeline.as_raw());
 
-        self.scene.render(
-            &recorder,
-            self.pipeline_layout.as_raw(),
-            self.start_time.elapsed(),
-        );
+        self.scene.render(&recorder, self.pipeline_layout.as_raw());
 
         let command_buffer = recorder.end_render_pass().end()?;
         command_buffer.submit_after(
@@ -200,6 +202,7 @@ struct Scene {
     world_set: device::DescriptorSet,
     draw_set: device::DescriptorSet,
     mvp_buffer: device::Buffer,
+    camera: PerspectiveCamera,
     mesh: resources::Mesh,
     texture: resources::Texture,
 }
@@ -253,7 +256,7 @@ impl Scene {
             vk::DescriptorType::UNIFORM_BUFFER,
             mvp_buffer.as_raw(),
             0,
-            64,
+            device::size_of::<Mat4>(),
         );
         draw_set.update_combined_image_sampler(
             0,
@@ -262,82 +265,154 @@ impl Scene {
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         );
 
-        type Vertex = ([f32; 3], [f32; 2], [f32; 4]);
-        let mut vertices: Vec<Vertex> = vec![];
-        let mut indices: Vec<u32> = vec![];
-        const FACES: &[(Vec3, Vec3)] = &[
-            (Vec3::Z_POS, Vec3::Y_POS),
-            (Vec3::X_POS, Vec3::Y_POS),
-            (Vec3::Z_NEG, Vec3::Y_POS),
-            (Vec3::X_NEG, Vec3::Y_POS),
-            (Vec3::Y_POS, Vec3::Z_POS),
-            (Vec3::Y_NEG, Vec3::Z_POS),
-        ];
-        for &(out, up) in FACES {
-            let right = up.cross(out);
-            let bl = out + -up + -right;
-            let br = out + -up + right;
-            let tl = out + up + -right;
-            let tr = out + up + right;
+        // let camera = OrthographicCamera {
+        let camera = PerspectiveCamera {
+            position: [0.0, 0.0, 3.0].into(),
+            rotation: Quaternion::ZERO,
+            aspect: 4.0 / 3.0,
+            fov_height: 60.0 * std::f32::consts::PI / 180.0,
+            near: 0.1,
+            far: 100.0,
+            //     width: 4.0,
+            //     height: 3.0,
+            //     depth: 20.0,
+        };
 
-            let index = vertices.len() as u32;
-
-            vertices.push((
-                bl.into(),
-                [0.0, 0.0],
-                Vec4::from((bl + Vec3::ONE) * 0.5).into(),
-            ));
-            vertices.push((
-                br.into(),
-                [1.0, 0.0],
-                Vec4::from((br + Vec3::ONE) * 0.5).into(),
-            ));
-            vertices.push((
-                tl.into(),
-                [0.0, 1.0],
-                Vec4::from((tl + Vec3::ONE) * 0.5).into(),
-            ));
-            vertices.push((
-                tr.into(),
-                [1.0, 1.0],
-                Vec4::from((tr + Vec3::ONE) * 0.5).into(),
-            ));
-            indices.push(index);
-            indices.push(index + 2);
-            indices.push(index + 1);
-            indices.push(index + 3);
-            indices.push(index + 2);
-            indices.push(index + 1);
-        }
-
-        let mesh = resources::Mesh::create::<Vertex>(&vertices, &indices)?;
+        let mesh = create_box_mesh()?;
 
         Ok(Self {
             descriptor_pool,
             world_set,
             draw_set,
             mvp_buffer,
+            camera,
             mesh,
             texture,
         })
+    }
+
+    fn resize(&mut self, size: (u32, u32)) {
+        let aspect = size.0 as f32 / size.1 as f32;
+        self.camera.aspect = aspect;
+        // self.camera.width = 3.0 * aspect;
+        // self.camera.height = 3.0;
+        // self.camera.depth = 20.0;
+        // self.camera.fov_width = self.camera.fov_height * aspect;
+    }
+
+    fn update(&mut self, elapsed: Duration) {
+        let rotation = Quaternion::axis_angle(
+            Vec3::X_POS * std::f32::consts::FRAC_1_SQRT_2
+                + Vec3::Y_POS * std::f32::consts::FRAC_1_SQRT_2,
+            elapsed.as_secs_f32(),
+        );
+        self.camera.rotation = rotation;
+        self.camera.position = rotation.rotate([0.0, 0.0, 3.0].into());
+        // let mvp = Mat4::scale([0.3, 0.4, 0.05].into())
+        //     * Mat4::translate([0.0, 0.0, 2.0].into())
     }
 
     fn render(
         &self,
         recorder: &device::CommandBufferRenderPassRecorder,
         pipeline_layout: vk::PipelineLayout,
-        elapsed: Duration,
     ) {
-        let mvp = Mat4::scale([0.3, 0.4, 0.05].into())
-            * Mat4::translate([0.0, 0.0, 2.0].into())
-            * Mat4::rotate(Quaternion::axis_angle(
-                Vec3::X_POS * std::f32::consts::FRAC_1_SQRT_2
-                    + Vec3::Y_POS * std::f32::consts::FRAC_1_SQRT_2,
-                elapsed.as_secs_f32(),
-            ));
-        self.mvp_buffer.write(0, &mvp);
+        self.mvp_buffer.write(0, &self.camera.matrix());
         recorder.bind_descriptor_set(pipeline_layout, 0, self.world_set.as_raw());
         recorder.bind_descriptor_set(pipeline_layout, 1, self.draw_set.as_raw());
         self.mesh.draw(&recorder);
     }
+}
+
+struct OrthographicCamera {
+    pub position: Vec3,
+    pub rotation: Quaternion,
+    pub width: f32,
+    pub height: f32,
+    pub depth: f32,
+}
+
+impl OrthographicCamera {
+    fn matrix(&self) -> Mat4 {
+        Mat4::scale(Vec3::ONE / Vec3::from([self.width, self.height, self.depth]))
+            * Mat4::rotate(self.rotation)
+            * Mat4::translate(self.position)
+    }
+}
+
+struct PerspectiveCamera {
+    pub position: Vec3,
+    pub rotation: Quaternion,
+    pub near: f32,
+    pub far: f32,
+    pub fov_height: f32,
+    pub aspect: f32,
+}
+
+impl PerspectiveCamera {
+    fn matrix(&self) -> Mat4 {
+        let y = 1.0 / (self.fov_height / 2.0).tan();
+        let x = y / self.aspect;
+        let z = self.far / (self.far - self.near);
+        let w = -self.far * self.near / (self.far - self.near);
+        Mat4::from([
+            Vec4::from([x, 0.0, 0.0, 0.0]),
+            Vec4::from([0.0, y, 0.0, 0.0]),
+            Vec4::from([0.0, 0.0, z, 1.0]),
+            Vec4::from([0.0, 0.0, w, 0.0]),
+        ]) * Mat4::rotate(self.rotation)
+            * Mat4::translate(self.position)
+    }
+}
+
+fn create_box_mesh() -> VkResult<resources::Mesh> {
+    type Vertex = ([f32; 3], [f32; 2], [f32; 4]);
+    let mut vertices: Vec<Vertex> = vec![];
+    let mut indices: Vec<u32> = vec![];
+    const FACES: &[(Vec3, Vec3)] = &[
+        (Vec3::Z_POS, Vec3::Y_POS),
+        (Vec3::X_POS, Vec3::Y_POS),
+        (Vec3::Z_NEG, Vec3::Y_POS),
+        (Vec3::X_NEG, Vec3::Y_POS),
+        (Vec3::Y_POS, Vec3::Z_POS),
+        (Vec3::Y_NEG, Vec3::Z_POS),
+    ];
+    for &(out, up) in FACES {
+        let right = up.cross(out);
+        let bl = out + -up + -right;
+        let br = out + -up + right;
+        let tl = out + up + -right;
+        let tr = out + up + right;
+
+        let index = vertices.len() as u32;
+
+        vertices.push((
+            bl.into(),
+            [0.0, 0.0],
+            Vec4::from((bl + Vec3::ONE) * 0.5).into(),
+        ));
+        vertices.push((
+            br.into(),
+            [1.0, 0.0],
+            Vec4::from((br + Vec3::ONE) * 0.5).into(),
+        ));
+        vertices.push((
+            tl.into(),
+            [0.0, 1.0],
+            Vec4::from((tl + Vec3::ONE) * 0.5).into(),
+        ));
+        vertices.push((
+            tr.into(),
+            [1.0, 1.0],
+            Vec4::from((tr + Vec3::ONE) * 0.5).into(),
+        ));
+        indices.push(index);
+        indices.push(index + 2);
+        indices.push(index + 1);
+        indices.push(index + 3);
+        indices.push(index + 2);
+        indices.push(index + 1);
+    }
+
+    resources::Mesh::create::<Vertex>(&vertices, &indices)
 }

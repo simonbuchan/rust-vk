@@ -139,6 +139,31 @@ impl CommandBufferRenderPassRecorder {
         }
     }
 
+    pub fn set_viewport_scissor(&self, (width, height): (u32, u32)) {
+        unsafe {
+            DEVICE.cmd_set_viewport(
+                self.as_raw(),
+                0,
+                &[vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: width as f32,
+                    height: height as f32,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                }],
+            );
+            DEVICE.cmd_set_scissor(
+                self.as_raw(),
+                0,
+                &[vk::Rect2D {
+                    offset: vk::Offset2D::default(),
+                    extent: vk::Extent2D { width, height },
+                }],
+            );
+        }
+    }
+
     pub fn bind_descriptor_set(
         &self,
         pipeline_layout: vk::PipelineLayout,

@@ -1,0 +1,97 @@
+programs:
+  - id: 1
+    vertex: |
+      #version 460
+      layout(set = 0, binding = 0) uniform per_draw { mat4 u_mvp; };
+      layout(binding = 0, location = 0) in vec3 a_pos;
+      layout(binding = 1, location = 0) in vec2 a_uv;
+      layout(location = 0) out vec2 v_uv;
+      void main() {
+        v_uv = a_uv;
+        gl_Position = u_mvp * vec4(a_pos, 1);
+      }
+    fragment: |
+      #version 460
+      layout(set = 1, binding = 0) uniform sampler2D u_tex;
+      layout(location = 0) in vec2 v_uv;
+      layout(location = 0) out vec4 o_col;
+      void main() {
+        o_col = texture(u_tex, v_uv);
+      }
+    input_bindings:
+      - binding: 0
+        stride: 12
+        attributes:
+          location: 0
+          type: vec3
+          offset: 0
+      - binding: 1
+        stride: 8
+        attributes:
+          location: 0
+          type: vec2
+          offset: 0
+
+buffers:
+  - id: 1
+    path: BoomBoxWithAxes.bin
+
+textures:
+  - id: 1
+    path: BoomBoxWithAxes_baseColor.png
+  - id: 2
+    path: BoomBoxWithAxes_baseColor1.png
+
+material:
+  - id: 1
+    program: 1
+    textures:
+      - location: 0
+        texture: 1
+  - id: 2
+    program: 1
+    textures:
+      - location: 0
+        texture: 2
+
+meshes:
+  - name: CoordinateSystem
+    material: 2
+    bindings:
+      - binding: 0
+        view:
+          buffer: 1
+          offset: 239316
+          length: 10500
+      - binding: 1
+        view:
+          buffer: 1
+          offset: 207816
+          length: 7000
+    indices:
+      count: 3420
+      type: u16
+      view:
+        buffer: 1
+        offset: 249816
+        length: 6840
+  - name: X_axis
+    material: 2
+    bindings:
+      - binding: 0
+        view:
+          buffer: 1
+          offset: 337728
+          length: 27024
+      - binding: 1
+        view:
+          buffer: 1
+          offset: 256656
+          length: 18016
+    indices:
+      count: 11064
+      type: u16
+      view:
+        buffer: 1
+        offset: 364752
+        length: 22128

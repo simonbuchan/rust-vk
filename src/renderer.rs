@@ -284,8 +284,7 @@ impl PipelineBuilder {
 
     pub fn build(
         &self,
-        (width, height): (u32, u32),
-        vertex_layout: &VertexLayout,
+        bindings: &[crate::definition::ProgramBinding],
         layout: vk::PipelineLayout,
     ) -> VkResult<Pipeline> {
         self.cache.create_pipeline(
@@ -305,13 +304,36 @@ impl PipelineBuilder {
                 )
                 .vertex_input_state(
                     &vk::PipelineVertexInputStateCreateInfo::builder()
-                        .vertex_attribute_descriptions(&vertex_layout.input_attributes)
-                        .vertex_binding_descriptions(&[vk::VertexInputBindingDescription::builder(
+                        .vertex_binding_descriptions(
+                            &bindings
+                                .iter()
+                                .map(|b| {
+                                    vk::VertexInputBindingDescription::builder()
+                                        .binding(b.binding)
+                                        .stride(b.stride)
+                                        .input_rate(vk::VertexInputRate::VERTEX)
+                                        .build()
+                                })
+                                .collect::<Vec<_>>(),
                         )
-                        .binding(0)
-                        .stride(vertex_layout.size)
-                        .input_rate(vk::VertexInputRate::VERTEX)
-                        .build()])
+                        .vertex_attribute_descriptions({
+                            &bindings
+                                .iter()
+                                .flat_map(|b| {
+                                    b.attributes
+                                        .iter()
+                                        .map(|a| {
+                                            vk::VertexInputAttributeDescription::builder()
+                                                .binding(b.binding)
+                                                .location(a.location)
+                                                .offset(a.offset)
+                                                .format(a.format.into())
+                                                .build()
+                                        })
+                                        .collect::<Vec<_>>()
+                                })
+                                .collect::<Vec<_>>()
+                        })
                         .build(),
                 )
                 .input_assembly_state(
@@ -321,15 +343,8 @@ impl PipelineBuilder {
                 )
                 .viewport_state(
                     &vk::PipelineViewportStateCreateInfo::builder()
-                        .viewports(&[vk::Viewport::builder()
-                            .width(width as f32)
-                            .height(height as f32)
-                            .min_depth(0.0)
-                            .max_depth(1.0)
-                            .build()])
-                        .scissors(&[vk::Rect2D::builder()
-                            .extent(vk::Extent2D { width, height })
-                            .build()])
+                        .viewport_count(1)
+                        .scissor_count(1)
                         .build(),
                 )
                 .rasterization_state(
@@ -357,6 +372,10 @@ impl PipelineBuilder {
                             .alpha_blend_op(vk::BlendOp::ADD)
                             .build()])
                         .build(),
+                )
+                .dynamic_state(
+                    &vk::PipelineDynamicStateCreateInfo::builder()
+                        .dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR]),
                 )
                 .layout(layout)
                 .render_pass(self.render_pass)

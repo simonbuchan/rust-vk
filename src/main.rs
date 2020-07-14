@@ -67,7 +67,8 @@ struct RenderContext {
     surface: device::Owned<vk::SurfaceKHR>,
     pipeline_builder: PipelineBuilder,
     pipeline: device::Pipeline,
-    vertex_layout: VertexLayout,
+    // vertex_layout: VertexLayout,
+    size: (u32, u32),
     pipeline_layout: device::PipelineLayout,
     start_time: Instant,
     scene: Scene,
@@ -75,42 +76,13 @@ struct RenderContext {
 
 impl RenderContext {
     fn new(size: (u32, u32), surface: device::Owned<vk::SurfaceKHR>) -> Result<Self> {
-        let vertex_layout = renderer::VertexLayout::new()
-            .add_vec3(0)
-            .add_vec2(1)
-            .add_vec4(2);
+        let scene: definition::Scene =
+            serde_yaml::from_reader(std::fs::File::open("pipeline.scene")?)?;
+        let program = &scene.programs[0];
 
         let mut compiler = resources::Compiler::new();
-        let vs = compiler.compile_vertex(
-            r#"
-                #version 460
-                layout(set = 0, binding = 0) uniform per_draw { mat4 u_mvp; };
-                layout(location = 0) in vec3 a_pos;
-                layout(location = 1) in vec2 a_uv;
-                layout(location = 2) in vec4 a_col;
-                layout(location = 0) out vec2 v_uv;
-                layout(location = 1) out vec4 v_col;
-                void main() {
-                    v_uv = a_uv;
-                    gl_Position = u_mvp * vec4(a_pos, 1);
-                    v_col = a_col;
-                }
-            "#,
-        )?;
-
-        let fs = compiler.compile_fragment(
-            r#"
-                #version 460
-                layout(set = 1, binding = 0) uniform sampler2D u_tex;
-                layout(location = 0) in vec2 v_uv;
-                layout(location = 1) in vec4 v_col;
-                layout(location = 0) out vec4 o_col;
-                void main() {
-                    o_col = texture(u_tex, v_uv) * v_col;
-                }
-            "#,
-        )?;
-
+        let vs = compiler.compile_vertex(&program.vertex)?;
+        let fs = compiler.compile_fragment(&program.fragment)?;
         let renderer = Renderer::create(surface.as_raw(), size)?;
 
         let pipeline_builder = renderer.pipeline_builder()?.add_stage(vs).add_stage(fs);
@@ -125,8 +97,7 @@ impl RenderContext {
         let pipeline_layout =
             device::PipelineLayout::create(&[world_set_layout.as_raw(), draw_set_layout.as_raw()])?;
 
-        let pipeline =
-            pipeline_builder.build(renderer.size, &vertex_layout, pipeline_layout.as_raw())?;
+        let pipeline = pipeline_builder.build(&program.bindings, pipeline_layout.as_raw())?;
 
         let scene = Scene::new(world_set_layout, draw_set_layout)?;
 
@@ -137,7 +108,8 @@ impl RenderContext {
             surface,
             pipeline_builder,
             pipeline,
-            vertex_layout,
+            size,
+            // vertex_layout,
             pipeline_layout,
             start_time,
             scene,
@@ -146,11 +118,12 @@ impl RenderContext {
 
     pub fn resize(&mut self, size: (u32, u32)) -> VkResult<()> {
         self.renderer.resize(size)?;
-        self.pipeline = self.pipeline_builder.build(
-            size,
-            &self.vertex_layout,
-            self.pipeline_layout.as_raw(),
-        )?;
+        // self.pipeline = self.pipeline_builder.build(
+        //     size,
+        //     &self.vertex_layout,
+        //     self.pipeline_layout.as_raw(),
+        // )?;
+        self.size = size;
         self.scene.resize(size);
         Ok(())
     }
@@ -182,6 +155,7 @@ impl RenderContext {
         );
 
         recorder.bind_pipeline(self.pipeline.as_raw());
+        recorder.set_viewport_scissor(self.size);
 
         self.scene.render(&recorder, self.pipeline_layout.as_raw());
 
@@ -194,6 +168,74 @@ impl RenderContext {
         self.renderer.present(swapchain_item.index)?;
 
         Ok(())
+    }
+}
+
+mod definition {
+    #[derive(serde::Deserialize)]
+    pub struct Scene {
+        pub programs: Vec<Program>,
+        #[serde(default)]
+        pub textures: Vec<File>,
+        #[serde(default)]
+        pub buffers: Vec<File>,
+    }
+
+    #[derive(serde::Deserialize)]
+    pub struct Program {
+        pub id: u32,
+        pub vertex: String,
+        pub fragment: String,
+        pub bindings: Vec<ProgramBinding>,
+    }
+
+    #[derive(serde::Deserialize)]
+    pub struct ProgramBinding {
+        pub binding: u32,
+        pub stride: u32,
+        pub attributes: Vec<ProgramAttribute>,
+    }
+
+    #[derive(serde::Deserialize)]
+    pub struct ProgramAttribute {
+        pub location: u32,
+        pub offset: u32,
+        pub format: AttributeFormat,
+    }
+
+    #[derive(Copy, Clone, serde::Deserialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum AttributeFormat {
+        F32,
+        Vec2,
+        Vec3,
+        Vec4,
+        U32,
+        UVec2,
+        UVec3,
+        UVec4,
+    }
+
+    impl Into<ash::vk::Format> for AttributeFormat {
+        fn into(self) -> ash::vk::Format {
+            use ash::vk::Format;
+            match self {
+                Self::F32 => Format::R32_SFLOAT,
+                Self::Vec2 => Format::R32G32_SFLOAT,
+                Self::Vec3 => Format::R32G32B32_SFLOAT,
+                Self::Vec4 => Format::R32G32B32A32_SFLOAT,
+                Self::U32 => Format::R32_UINT,
+                Self::UVec2 => Format::R32G32_UINT,
+                Self::UVec3 => Format::R32G32B32_UINT,
+                Self::UVec4 => Format::R32G32B32A32_UINT,
+            }
+        }
+    }
+
+    #[derive(serde::Deserialize)]
+    pub struct File {
+        pub id: u32,
+        pub path: String,
     }
 }
 
@@ -211,7 +253,7 @@ impl Scene {
     pub fn new(
         world_set_layout: device::DescriptorSetLayout,
         draw_set_layout: device::DescriptorSetLayout,
-    ) -> VkResult<Self> {
+    ) -> Result<Self> {
         let descriptor_pool = device::DescriptorPool::create(
             2,
             &[
@@ -234,18 +276,30 @@ impl Scene {
             vk::BufferUsageFlags::UNIFORM_BUFFER,
         )?;
 
-        let texture = resources::Texture::create_2d(128, 128)?;
+        let (info, mut reader) =
+            png::Decoder::new(std::fs::File::open("assets/TextureCoordinateTemplate.png")?)
+                .read_info()?;
+
+        let texture = resources::Texture::create_2d(info.width, info.height)?;
 
         let mut upload = texture.begin_upload().unwrap();
+
         for y in 0..texture.height {
-            let row = upload.row(y);
-            for x in 0..texture.width {
-                let is_stripe = y / 8 % 2 == 0;
-                let stripe_y = if is_stripe { y } else { texture.height - y - 1 };
-                let a = (x * 256 / texture.width) as u8;
-                let v = (stripe_y * a as u32 / texture.height) as u8;
-                row[x as usize] = [v, v, v, a];
-            }
+            let input_row = reader.next_row()?.expect("png row");
+            let input_row = unsafe {
+                std::slice::from_raw_parts(input_row.as_ptr().cast(), texture.width as usize)
+            };
+            upload
+                .row(texture.height - y - 1)
+                .copy_from_slice(input_row);
+            // let row = upload.row(y);
+            //  for x in 0..texture.width {
+            //      let is_stripe = y / 8 % 2 == 0;
+            //      let stripe_y = if is_stripe { y } else { texture.height - y - 1 };
+            //      let a = (x * 256 / texture.width) as u8;
+            //      let v = (stripe_y * a as u32 / texture.height) as u8;
+            //      row[x as usize] = [v, v, v, a];
+            //  }
         }
         upload
             .upload_before(vk::PipelineStageFlags::FRAGMENT_SHADER)
@@ -370,10 +424,10 @@ fn create_box_mesh() -> VkResult<resources::Mesh> {
     let mut vertices: Vec<Vertex> = vec![];
     let mut indices: Vec<u32> = vec![];
     const FACES: &[(Vec3, Vec3)] = &[
-        (Vec3::Z_POS, Vec3::Y_POS),
-        (Vec3::X_POS, Vec3::Y_POS),
-        (Vec3::Z_NEG, Vec3::Y_POS),
-        (Vec3::X_NEG, Vec3::Y_POS),
+        (Vec3::Z_POS, Vec3::Y_NEG),
+        (Vec3::X_POS, Vec3::Y_NEG),
+        (Vec3::Z_NEG, Vec3::Y_NEG),
+        (Vec3::X_NEG, Vec3::Y_NEG),
         (Vec3::Y_POS, Vec3::Z_POS),
         (Vec3::Y_NEG, Vec3::Z_POS),
     ];

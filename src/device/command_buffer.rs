@@ -99,11 +99,71 @@ impl CommandBufferRecorder {
         CommandBufferRenderPassRecorder(self)
     }
 
-    pub fn image_memory_barrier(
+    pub fn copy_buffer_to_image(
+        &self,
+        src_buffer: vk::Buffer,
+        dst_image: vk::Image,
+        dst_image_layout: vk::ImageLayout,
+        regions: &[vk::BufferImageCopy],
+    ) {
+        unsafe {
+            DEVICE.cmd_copy_buffer_to_image(
+                self.as_raw(),
+                src_buffer,
+                dst_image,
+                dst_image_layout,
+                regions,
+            );
+        }
+    }
+
+    pub fn copy_image_to_image(
+        &self,
+        src_image: vk::Image,
+        src_image_layout: vk::ImageLayout,
+        dst_image: vk::Image,
+        dst_image_layout: vk::ImageLayout,
+        regions: &[vk::ImageCopy],
+    ) {
+        unsafe {
+            DEVICE.cmd_copy_image(
+                self.as_raw(),
+                src_image,
+                src_image_layout,
+                dst_image,
+                dst_image_layout,
+                regions,
+            );
+        }
+    }
+
+    pub fn blit_image(
+        &self,
+        src_image: vk::Image,
+        src_image_layout: vk::ImageLayout,
+        dst_image: vk::Image,
+        dst_image_layout: vk::ImageLayout,
+        regions: &[vk::ImageBlit],
+        filter: vk::Filter,
+    ) {
+        unsafe {
+            DEVICE.cmd_blit_image(
+                self.as_raw(),
+                src_image,
+                src_image_layout,
+                dst_image,
+                dst_image_layout,
+                regions,
+                filter,
+            );
+        }
+    }
+
+    pub fn image_transition(
         &self,
         src_stage_mask: vk::PipelineStageFlags,
         dst_stage_mask: vk::PipelineStageFlags,
-        barrier: &vk::ImageMemoryBarrier,
+        barriers: &[vk::ImageMemoryBarrier],
     ) {
         unsafe {
             DEVICE.cmd_pipeline_barrier(
@@ -113,29 +173,8 @@ impl CommandBufferRecorder {
                 vk::DependencyFlags::empty(),
                 &[],
                 &[],
-                std::slice::from_ref(barrier),
+                barriers,
             )
-        }
-    }
-}
-
-pub struct CommandBufferRenderPassRecorder(CommandBufferRecorder);
-
-impl AsRef<vk::CommandBuffer> for CommandBufferRenderPassRecorder {
-    fn as_ref(&self) -> &vk::CommandBuffer {
-        self.0.as_ref()
-    }
-}
-
-impl CommandBufferRenderPassRecorder {
-    pub fn end_render_pass(self) -> CommandBufferRecorder {
-        unsafe { DEVICE.cmd_end_render_pass(self.as_raw()) };
-        self.0
-    }
-
-    pub fn bind_pipeline(&self, pipeline: vk::Pipeline) {
-        unsafe {
-            DEVICE.cmd_bind_pipeline(self.as_raw(), vk::PipelineBindPoint::GRAPHICS, pipeline);
         }
     }
 
@@ -163,6 +202,27 @@ impl CommandBufferRenderPassRecorder {
             );
         }
     }
+}
+
+pub struct CommandBufferRenderPassRecorder(CommandBufferRecorder);
+
+impl AsRef<vk::CommandBuffer> for CommandBufferRenderPassRecorder {
+    fn as_ref(&self) -> &vk::CommandBuffer {
+        self.0.as_ref()
+    }
+}
+
+impl CommandBufferRenderPassRecorder {
+    pub fn end_render_pass(self) -> CommandBufferRecorder {
+        unsafe { DEVICE.cmd_end_render_pass(self.as_raw()) };
+        self.0
+    }
+
+    pub fn bind_pipeline(&self, pipeline: vk::Pipeline) {
+        unsafe {
+            DEVICE.cmd_bind_pipeline(self.as_raw(), vk::PipelineBindPoint::GRAPHICS, pipeline);
+        }
+    }
 
     pub fn bind_descriptor_set(
         &self,
@@ -179,6 +239,27 @@ impl CommandBufferRenderPassRecorder {
                 &[descriptor_set],
                 &[],
             );
+        }
+    }
+
+    pub fn push<T: ?Sized + Copy>(
+        &self,
+        layout: vk::PipelineLayout,
+        stage_flags: vk::ShaderStageFlags,
+        offset: u32,
+        data: &T,
+    ) {
+        unsafe {
+            DEVICE.cmd_push_constants(
+                self.as_raw(),
+                layout,
+                stage_flags,
+                offset,
+                std::slice::from_raw_parts(
+                    std::mem::transmute::<&T, *const u8>(data),
+                    std::mem::size_of_val(data),
+                ),
+            )
         }
     }
 

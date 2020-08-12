@@ -20,11 +20,15 @@ impl AsRef<vk::PipelineLayout> for PipelineLayout {
 }
 
 impl PipelineLayout {
-    pub fn create(set_layouts: &[vk::DescriptorSetLayout]) -> VkResult<Self> {
+    pub fn create(
+        set_layouts: &[vk::DescriptorSetLayout],
+        push_constant_ranges: &[vk::PushConstantRange],
+    ) -> VkResult<Self> {
         let owned = unsafe {
             Owned::create(
                 &vk::PipelineLayoutCreateInfo::builder()
                     .set_layouts(set_layouts)
+                    .push_constant_ranges(push_constant_ranges)
                     .build(),
             )?
         };
@@ -74,6 +78,24 @@ impl Destroy for vk::Pipeline {
     }
 }
 pub struct Pipeline(Owned<vk::Pipeline>);
+
+impl Pipeline {
+    pub fn create(
+        cache: Option<vk::PipelineCache>,
+        infos: &vk::GraphicsPipelineCreateInfo,
+    ) -> VkResult<Pipeline> {
+        match unsafe {
+            DEVICE.create_graphics_pipelines(
+                cache.unwrap_or(vk::PipelineCache::null()),
+                std::slice::from_ref(infos),
+                ALLOC,
+            )
+        } {
+            Ok(results) => Ok(Pipeline(unsafe { Owned::from_raw(results[0]) })),
+            Err((_results, err)) => Err(err),
+        }
+    }
+}
 
 impl AsRef<vk::Pipeline> for Pipeline {
     fn as_ref(&self) -> &vk::Pipeline {

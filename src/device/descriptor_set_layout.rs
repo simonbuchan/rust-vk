@@ -38,7 +38,7 @@ impl<'a> DescriptorSetLayoutBuilder<'a> {
         self.add_basic(binding, vk::DescriptorType::COMBINED_IMAGE_SAMPLER, stages)
     }
 
-    fn add_basic(
+    pub fn add_basic(
         self,
         binding: u32,
         descriptor_type: vk::DescriptorType,

@@ -4,6 +4,22 @@ use std::ops::{Add, Div, Mul, Neg};
 
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Default)]
+pub struct Vec2([f32; 2]);
+
+impl From<[f32; 2]> for Vec2 {
+    fn from(value: [f32; 2]) -> Self {
+        Self(value)
+    }
+}
+
+impl From<Vec2> for [f32; 2] {
+    fn from(value: Vec2) -> Self {
+        value.0
+    }
+}
+
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct Vec3([f32; 3]);
 
 impl From<[f32; 3]> for Vec3 {
@@ -170,7 +186,7 @@ impl Quaternion {
         // Should negate something when the dot is negative (e.g. they are opposing)
         let im = Vec3::cross(from, to);
         let r = Vec3::dot(from, to) * f32::sqrt(from.len2() * to.len2());
-        (im / r, 1.0).into()
+        Quaternion::from((im / r, 1.0)).normalized()
     }
 
     pub fn rotate(self, p: Vec3) -> Vec3 {
@@ -187,7 +203,9 @@ impl Quaternion {
     }
 
     pub fn normalized(&self) -> Self {
-        (self.im() / self.real(), 1.0).into()
+        let [x, y, z, w] = self.0;
+        let d = (x * x + y * y + z * z + w * w).sqrt();
+        Self([x / d, y / d, z / d, w / d])
     }
 }
 
@@ -275,53 +293,23 @@ impl Mat4 {
     }
 
     pub fn rotate(value: Quaternion) -> Self {
-        // https://en.wikipedia.org/wiki/Quaternions_and_spatial_rotation#Quaternion-derived_rotation_matrix
-        // Assuming unit quaternion.
         let [x, y, z, w] = value.0;
+        let xx = x * x;
+        let xy = x * y;
+        let xz = x * z;
+        let xw = x * w;
+        let yy = y * y;
+        let yz = y * z;
+        let yw = y * w;
+        let zz = z * z;
+        let zw = z * w;
+        let ww = w * w;
         Self([
-            [
-                1.0 - 2.0 * (y * y - z * z),
-                2.0 * (x * y - z * w),
-                2.0 * (x * z + y * w),
-                0.0,
-            ],
-            [
-                2.0 * (x * y + z * w),
-                1.0 - 2.0 * (x * x + z * z),
-                2.0 * (y * z - x * w),
-                0.0,
-            ],
-            [
-                2.0 * (x * z - y * w),
-                2.0 * (y * z + x * w),
-                1.0 - 2.0 * (x * x + y * y),
-                0.0,
-            ],
+            [ww + xx - yy - zz, 2.0 * (xy - zw), 2.0 * (xz + yw), 0.0],
+            [2.0 * (xy + zw), ww - xx + yy - zz, 2.0 * (yz - xw), 0.0],
+            [2.0 * (xz - yw), 2.0 * (yz + xw), ww - xx - yy + zz, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ])
-        //https://en.wikipedia.org/wiki/Quaternions_and_spatial_rotation#Conversion_to_and_from_the_matrix_representation
-        // let [b, c, d, a] = (value.0).0;
-        // Self([
-        //     [
-        //         a * a + b * b - c * c - d * d,
-        //         2 * b * c - 2 * a * d,
-        //         2 * b * d + 2 * a * c,
-        //         0.0,
-        //     ],
-        //     [
-        //         2 * b * c + 2 * a * d,
-        //         a * a - b * b + c * c - d * d,
-        //         2 * c * d - 2 * a * b,
-        //         0.0,
-        //     ],
-        //     [
-        //         2 * b * d - 2 * a * c,
-        //         2 * c * d + 2 * a * b,
-        //         a * a - b * b - c * c + d * d,
-        //         0.0,
-        //     ],
-        //     [0.0, 0.0, 0.0, 1.0],
-        // ])
     }
 
     pub fn scale(value: Vec3) -> Self {

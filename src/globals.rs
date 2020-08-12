@@ -137,6 +137,7 @@ pub unsafe fn init_device() -> Result<()> {
                 .queue_family_index(GRAPHICS_QUEUE_FAMILY_INDEX)
                 .queue_priorities(&[1.0])
                 .build()])
+            .enabled_features(&vk::PhysicalDeviceFeatures::builder().sampler_anisotropy(true))
             .build();
 
         INSTANCE.create_device(PHYSICAL_DEVICE, &info, ALLOC)?

@@ -20,13 +20,25 @@ impl AsRef<vk::Image> for ImageObject {
     }
 }
 
+pub fn mip_levels((width, height): (u32, u32)) -> u32 {
+    // If the image has a max dimension of 5=0b101,
+    // then the mip levels and their max dimension are:
+    //   0 = 0b101,  1 = 0b10,   2 = 0b1
+    // For 32:
+    //   0 = 0b10_0000,  1 = 0b1_0000
+    //   2 =    0b1000,  3 =    0b100
+    //   4 =      0b10,  5 =      0b1
+    // So essentially find the position of the top set bit:
+    32 - width.max(height).leading_zeros()
+}
+
 impl ImageObject {
     pub fn create_2d(
         (width, height): (u32, u32),
+        mip_levels: u32,
         format: vk::Format,
-        tiling: vk::ImageTiling,
+        samples: vk::SampleCountFlags,
         usage: vk::ImageUsageFlags,
-        inital_layout: vk::ImageLayout,
     ) -> VkResult<Self> {
         unsafe {
             let owned = Owned::create(
@@ -38,13 +50,13 @@ impl ImageObject {
                         height,
                         depth: 1,
                     })
-                    .mip_levels(1)
+                    .mip_levels(mip_levels)
                     .array_layers(1)
-                    .samples(vk::SampleCountFlags::TYPE_1)
-                    .tiling(tiling)
+                    .samples(samples)
+                    .tiling(vk::ImageTiling::OPTIMAL)
                     .usage(usage)
                     .queue_family_indices(&[GRAPHICS_QUEUE_FAMILY_INDEX])
-                    .initial_layout(inital_layout)
+                    .initial_layout(vk::ImageLayout::UNDEFINED)
                     .build(),
             )?;
 
@@ -59,17 +71,6 @@ impl ImageObject {
     pub fn bind_memory(&self, memory: vk::DeviceMemory) -> VkResult<()> {
         unsafe { DEVICE.bind_image_memory(self.as_raw(), memory, 0) }
     }
-
-    pub fn color_subresource_layout(&self) -> vk::SubresourceLayout {
-        unsafe {
-            DEVICE.get_image_subresource_layout(
-                self.as_raw(),
-                vk::ImageSubresource::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .build(),
-            )
-        }
-    }
 }
 
 pub struct Image {
@@ -80,18 +81,18 @@ pub struct Image {
 impl Image {
     pub fn create_2d(
         size: (u32, u32),
+        mip_levels: u32,
         format: vk::Format,
+        samples: vk::SampleCountFlags,
         usage: vk::ImageUsageFlags,
-        initial_layout: vk::ImageLayout,
         memory_type_mask: MemoryTypeMask,
     ) -> VkResult<Self> {
-        let image =
-            ImageObject::create_2d(size, format, vk::ImageTiling::LINEAR, usage, initial_layout)?;
+        let image = ImageObject::create_2d(size, mip_levels, format, samples, usage)?;
         let memory_requirements = image.memory_requirements();
 
-        let memory = Memory::allocate_mappable(
+        let memory = Memory::allocate(
             memory_requirements.size,
-            MemoryTypeMask(memory_requirements.memory_type_bits) & memory_type_mask,
+            (MemoryTypeMask(memory_requirements.memory_type_bits) & memory_type_mask).first_index(),
         )?;
 
         image.bind_memory(memory.as_raw())?;

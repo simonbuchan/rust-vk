@@ -161,23 +161,7 @@ impl Scene {
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         );
 
-        let camera = camera::Camera {
-            transform: camera::Transform {
-                position: [0.0, 0.0, -5.0].into(),
-                rotation: Quaternion::ZERO,
-            },
-            projection: camera::PerspectiveProjection {
-                aspect: 4.0 / 3.0,
-                fov_height: 60.0 * std::f32::consts::PI / 180.0,
-                near: 0.1,
-                far: 100.0,
-            },
-            // projection: camera::OrthographicProjection {
-            //     width: 4.0,
-            //     height: 3.0,
-            //     depth: 20.0,
-            // },
-        };
+        let camera = camera::Camera::<camera::PerspectiveProjection>::default();
 
         let mesh = create_box_mesh()?;
 
@@ -203,7 +187,7 @@ impl Scene {
         let rotate_around = Quaternion::axis_angle(Vec3::Y_POS, elapsed.as_secs_f32() * 0.3);
         let rotate_down = Quaternion::axis_angle(Vec3::X_NEG, std::f32::consts::FRAC_PI_6);
         self.camera.transform.rotation = rotate_around * rotate_down;
-        self.camera.transform.position = rotate_around.rotate([0.0, 3.0, 5.0].into());
+        self.camera.transform.position = rotate_around.rotate([0.0, 1.5, 3.0].into());
     }
 
     pub fn render(&self, recorder: &device::CommandBufferRenderPassRecorder) -> Result<()> {

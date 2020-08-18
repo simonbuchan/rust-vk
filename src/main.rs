@@ -72,11 +72,12 @@ struct RenderContext {
 impl RenderContext {
     fn new(size: (u32, u32), surface: device::Owned<vk::SurfaceKHR>) -> Result<Self> {
         let renderer = renderer::Renderer::create(surface.as_raw(), size)?;
-        let scene = scene::Scene::parse(
+        let mut scene = scene::Scene::parse(
             renderer.render_pass.as_raw(),
             renderer.samples,
             "pipeline.scene",
         )?;
+        scene.resize(size);
 
         let start_time = Instant::now();
 

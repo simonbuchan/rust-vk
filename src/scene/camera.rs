@@ -6,11 +6,32 @@ pub struct OrthographicProjection {
     pub depth: f32,
 }
 
+impl Default for OrthographicProjection {
+    fn default() -> Self {
+        Self {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        }
+    }
+}
+
 pub struct PerspectiveProjection {
     pub aspect: f32,
-    pub fov_height: f32,
+    pub fov_deg_height: f32,
     pub near: f32,
     pub far: f32,
+}
+
+impl Default for PerspectiveProjection {
+    fn default() -> Self {
+        Self {
+            aspect: 1.0,
+            fov_deg_height: 60.0,
+            near: 0.01,
+            far: 1000.0,
+        }
+    }
 }
 
 pub trait Projection {
@@ -29,8 +50,8 @@ impl Projection for OrthographicProjection {
 
 impl Projection for PerspectiveProjection {
     fn matrix(&self) -> Mat4 {
-        let t = (self.fov_height / 2.0).tan();
-        let r = t / self.aspect;
+        let r = (self.fov_deg_height * std::f32::consts::PI / 360.0).tan();
+        let t = r * self.aspect;
         let x = 1.0 / t;
         let y = 1.0 / r;
         let z = self.far / (self.near - self.far);
@@ -44,6 +65,7 @@ impl Projection for PerspectiveProjection {
     }
 }
 
+#[derive(Default)]
 pub struct Transform {
     pub position: Vec3,
     pub rotation: Quaternion,
@@ -55,6 +77,7 @@ impl Transform {
     }
 }
 
+#[derive(Default)]
 pub struct Camera<P: Projection> {
     pub transform: Transform,
     pub projection: P,

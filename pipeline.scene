@@ -42,6 +42,12 @@ materials:
       layout(location = 1) in vec4 v_col;
       layout(location = 0) out vec4 o_col;
 
+      // https://thebookofshaders.com/10/
+      float random(vec2 st) {
+        return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
+      }
+
       void main() {
-        o_col = texture(u_tex, v_uv) * v_col;
+        float noise = (random(gl_FragCoord.xy) - 0.5) * 0.015;
+        o_col = texture(u_tex, v_uv) * (v_col + noise);
       }

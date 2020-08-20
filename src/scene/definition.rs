@@ -3,12 +3,16 @@ use serde::Deserialize;
 
 #[derive(Deserialize)]
 pub struct Scene {
+    #[serde(default)]
     pub programs: Vec<Program>,
+    #[serde(default)]
     pub materials: Vec<Material>,
     #[serde(default)]
     pub textures: Vec<File>,
     #[serde(default)]
     pub buffers: Vec<File>,
+    #[serde(default)]
+    pub meshes: Vec<Mesh>,
 }
 
 #[derive(Deserialize)]
@@ -121,4 +125,40 @@ pub struct MaterialTexture {
 pub struct File {
     pub id: u32,
     pub path: String,
+}
+
+#[derive(Deserialize)]
+pub struct Mesh {
+    // pub name: String,
+    pub material: u32,
+    #[serde(default)]
+    pub bindings: Vec<MeshBinding>,
+    pub indices: MeshIndices,
+}
+
+#[derive(Deserialize)]
+pub struct MeshBinding {
+    pub binding: u32,
+    pub view: BufferView,
+}
+
+#[derive(Deserialize)]
+pub struct MeshIndices {
+    pub count: u32,
+    pub format: MeshIndexFormat,
+    pub view: BufferView,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MeshIndexFormat {
+    U16,
+    U32,
+}
+
+#[derive(Deserialize)]
+pub struct BufferView {
+    pub buffer: u32,
+    pub offset: u32,
+    pub size: u32,
 }

@@ -8,8 +8,9 @@ edition = "2018"
 
 [dependencies]
 ash = "0.31"
-png = "0.16.6"
+png = "0.16"
 shaderc = "0.6"
 winit = "0.22"
-serde = { version = "1.0.114", features = ["derive"] }
-serde_yaml = "0.8.13"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.8"
+notify = "4"

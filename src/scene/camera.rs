@@ -1,5 +1,6 @@
 use crate::math::*;
 
+#[derive(Copy, Clone)]
 pub struct OrthographicProjection {
     pub width: f32,
     pub height: f32,
@@ -16,6 +17,7 @@ impl Default for OrthographicProjection {
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct PerspectiveProjection {
     pub aspect: f32,
     pub fov_deg_height: f32,
@@ -65,7 +67,7 @@ impl Projection for PerspectiveProjection {
     }
 }
 
-#[derive(Default)]
+#[derive(Copy, Clone, Default)]
 pub struct Transform {
     pub position: Vec3,
     pub rotation: Quaternion,
@@ -77,7 +79,7 @@ impl Transform {
     }
 }
 
-#[derive(Default)]
+#[derive(Copy, Clone, Default)]
 pub struct Camera<P: Projection> {
     pub transform: Transform,
     pub projection: P,

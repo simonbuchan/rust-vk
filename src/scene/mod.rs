@@ -9,27 +9,17 @@ use crate::error::*;
 use crate::math::*;
 use crate::resources;
 use crate::scene::camera::Projection;
+use notify::Watcher;
+use std::path::{Path, PathBuf};
 
 mod camera;
 mod definition;
 mod material;
 
-#[allow(dead_code)]
-pub struct Scene {
-    programs: BTreeMap<u32, material::MaterialProgram>,
-    materials: BTreeMap<u32, material::Material>,
-    textures: BTreeMap<u32, resources::Texture>,
-    descriptor_pool: device::DescriptorPool,
-    view_set: device::DescriptorSet,
-    view_uniform_buffer: device::Buffer,
-    camera: camera::Camera<camera::PerspectiveProjection>,
-    model: Model,
-}
-
 struct Model {
     transform: Mat4,
-    mesh: resources::Mesh,
     material: u32,
+    mesh: resources::MeshObject,
 }
 
 #[derive(Copy, Clone)]
@@ -38,12 +28,107 @@ struct ViewUniforms {
     pub proj: Mat4,
 }
 
+pub struct SceneWatcher {
+    change_watcher: notify::RecommendedWatcher,
+    change_receiver: std::sync::mpsc::Receiver<notify::DebouncedEvent>,
+    render_pass: vk::RenderPass,
+    samples: vk::SampleCountFlags,
+    path: PathBuf,
+    scene: Scene,
+    watch_paths: Vec<PathBuf>,
+}
+
+impl SceneWatcher {
+    pub fn create(
+        render_pass: vk::RenderPass,
+        samples: vk::SampleCountFlags,
+        path: &Path,
+    ) -> Result<Self> {
+        let (tx, change_receiver) = std::sync::mpsc::channel();
+        let mut change_watcher =
+            notify::RecommendedWatcher::new(tx, std::time::Duration::from_millis(100)).unwrap();
+        change_watcher
+            .watch(path, notify::RecursiveMode::NonRecursive)
+            .unwrap();
+
+        let (scene, watch_paths) = Scene::parse(render_pass, samples, &path)?;
+
+        for p in &watch_paths {
+            change_watcher
+                .watch(&p, notify::RecursiveMode::NonRecursive)
+                .unwrap();
+        }
+
+        Ok(Self {
+            change_watcher,
+            change_receiver,
+            render_pass,
+            samples,
+            path: PathBuf::from(path),
+            scene,
+            watch_paths,
+        })
+    }
+
+    fn check_reload(&mut self) -> Result<()> {
+        if let Ok(change) = self.change_receiver.try_recv() {
+            println!("change: {:?}", change);
+
+            while self.change_receiver.try_recv().is_ok() {}
+            let (mut scene, watch_paths) =
+                Scene::parse(self.render_pass, self.samples, &self.path)?;
+
+            for p in &self.watch_paths {
+                self.change_watcher.unwatch(&p).unwrap();
+            }
+            for p in &watch_paths {
+                self.change_watcher
+                    .watch(&p, notify::RecursiveMode::NonRecursive)
+                    .unwrap();
+            }
+
+            // Preserve aspect ratio (should probably be recomputed each frame?)
+            scene.camera.projection = self.scene.camera.projection;
+
+            self.scene = scene;
+            self.watch_paths = watch_paths;
+        }
+        Ok(())
+    }
+
+    pub fn resize(&mut self, size: (u32, u32)) {
+        self.scene.resize(size);
+    }
+
+    pub fn update(&mut self, elapsed: Duration) {
+        self.check_reload().unwrap();
+        self.scene.update(elapsed);
+    }
+
+    pub fn render(&self, recorder: &device::CommandBufferRenderPassRecorder) -> Result<()> {
+        self.scene.render(recorder)
+    }
+}
+
+#[allow(dead_code)]
+pub struct Scene {
+    programs: BTreeMap<u32, material::MaterialProgram>,
+    materials: BTreeMap<u32, material::Material>,
+    textures: BTreeMap<u32, resources::Texture>,
+    memories: BTreeMap<u32, device::Memory>,
+    models: Vec<Model>,
+    descriptor_pool: device::DescriptorPool,
+    view_set: device::DescriptorSet,
+    view_uniform_buffer: device::Buffer,
+    camera: camera::Camera<camera::PerspectiveProjection>,
+}
+
 impl Scene {
     pub fn parse(
         render_pass: vk::RenderPass,
         samples: vk::SampleCountFlags,
-        path: &str,
-    ) -> Result<Self> {
+        path: &Path,
+    ) -> Result<(Self, Vec<PathBuf>)> {
         let scene: definition::Scene = serde_yaml::from_reader(std::fs::File::open(path)?)?;
 
         let view_descriptors_layout = device::DescriptorSetLayout::builder()
@@ -53,9 +138,6 @@ impl Scene {
         let mut compiler = resources::Compiler::new();
 
         let mut programs = BTreeMap::new();
-        let mut materials = BTreeMap::new();
-        let mut textures = BTreeMap::new();
-
         for p in &scene.programs {
             programs.insert(
                 p.id,
@@ -81,7 +163,12 @@ impl Scene {
             ],
         )?;
 
+        let mut paths = vec![];
+
+        let mut textures = BTreeMap::new();
         for t in &scene.textures {
+            paths.push(PathBuf::from(&t.path));
+
             let (info, mut reader) =
                 png::Decoder::new(std::fs::File::open(&t.path)?).read_info()?;
 
@@ -106,6 +193,7 @@ impl Scene {
             vk::BufferUsageFlags::UNIFORM_BUFFER,
         )?;
 
+        let mut materials = BTreeMap::new();
         for m in &scene.materials {
             let program = &programs[&m.program];
             let pipeline = program.create_material_pipeline(render_pass, samples)?;
@@ -129,6 +217,89 @@ impl Scene {
             );
         }
 
+        let mut buffer_reqs = BTreeMap::new();
+
+        fn buffer_view(
+            buffer_reqs: &mut BTreeMap<u32, vk::MemoryRequirements>,
+            view: &definition::BufferView,
+            usage: vk::BufferUsageFlags,
+        ) -> VkResult<device::BufferObject> {
+            let mut buffer_req =
+                buffer_reqs
+                    .entry(view.buffer)
+                    .or_insert_with(|| vk::MemoryRequirements {
+                        memory_type_bits: device::MemoryTypeMask::mappable().0,
+                        size: 0,
+                        alignment: 1,
+                    });
+            let buffer = device::BufferObject::create(view.size as vk::DeviceSize, usage)?;
+
+            let req = buffer.memory_requirements();
+            buffer_req.size = buffer_req
+                .size
+                .max(view.offset as vk::DeviceSize + req.size);
+            buffer_req.alignment = buffer_req.alignment.max(req.alignment);
+            buffer_req.memory_type_bits &= req.memory_type_bits;
+
+            Ok(buffer)
+        }
+
+        let mut models = Vec::new();
+        for m in &scene.meshes {
+            let mut vertex_buffers = Vec::new();
+            for b in &m.bindings {
+                vertex_buffers.push(buffer_view(
+                    &mut buffer_reqs,
+                    &b.view,
+                    vk::BufferUsageFlags::VERTEX_BUFFER,
+                )?);
+            }
+            let index_buffer = buffer_view(
+                &mut buffer_reqs,
+                &m.indices.view,
+                vk::BufferUsageFlags::INDEX_BUFFER,
+            )?;
+            models.push(Model {
+                transform: Mat4::IDENTITY,
+                material: m.material,
+                mesh: resources::MeshObject {
+                    vertex_buffers,
+                    index_buffer,
+                    count: m.indices.count,
+                },
+            });
+        }
+
+        let mut memories = BTreeMap::new();
+        for b in &scene.buffers {
+            paths.push(PathBuf::from(&b.path));
+
+            if let Some(req) = buffer_reqs.get(&b.id) {
+                let data = std::fs::read(&b.path)?;
+                let memory = device::Memory::allocate_mappable(
+                    req.size,
+                    device::MemoryTypeMask(req.memory_type_bits),
+                )?;
+                memory.write_slice(0, &data)?;
+                memories.insert(b.id, memory);
+            }
+        }
+
+        for (m, d) in models.iter().zip(scene.meshes) {
+            fn bind(
+                memories: &BTreeMap<u32, device::Memory>,
+                object: &device::BufferObject,
+                view: &definition::BufferView,
+            ) -> VkResult<()> {
+                object.bind_memory(&memories[&view.buffer], view.offset as vk::DeviceSize)
+            }
+
+            for (o, b) in m.mesh.vertex_buffers.iter().zip(d.bindings) {
+                bind(&memories, o, &b.view)?;
+            }
+            bind(&memories, &m.mesh.index_buffer, &d.indices.view)?;
+        }
+
         view_set.update_buffer(
             0,
             vk::DescriptorType::UNIFORM_BUFFER,
@@ -139,22 +310,19 @@ impl Scene {
 
         let camera = camera::Camera::<camera::PerspectiveProjection>::default();
 
-        let mesh = create_box_mesh()?;
-
-        Ok(Self {
+        let scene = Self {
             programs,
             materials,
             textures,
+            memories,
+            models,
             descriptor_pool,
             view_set,
             view_uniform_buffer,
             camera,
-            model: Model {
-                transform: Mat4::IDENTITY,
-                mesh,
-                material: 1,
-            },
-        })
+        };
+
+        Ok((scene, paths))
     }
 
     pub fn resize(&mut self, size: (u32, u32)) {
@@ -178,23 +346,26 @@ impl Scene {
             },
         )?;
 
-        let material = &self.materials[&self.model.material];
-        let program = &self.programs[&material.program];
-        recorder.bind_pipeline(material.pipeline.as_raw());
-        let pipeline_layout = program.pipeline_layout.as_raw();
-        recorder.bind_descriptor_set(pipeline_layout, 0, self.view_set.as_raw());
+        // TODO: sort by program (pipeline_layout) / material (pipeline)
+        for model in &self.models {
+            let material = &self.materials[&model.material];
+            let program = &self.programs[&material.program];
+            recorder.bind_pipeline(material.pipeline.as_raw());
+            let pipeline_layout = program.pipeline_layout.as_raw();
+            recorder.bind_descriptor_set(pipeline_layout, 0, self.view_set.as_raw());
 
-        // for each material
-        recorder.bind_descriptor_set(pipeline_layout, 1, material.descriptors.as_raw());
+            // for each material
+            recorder.bind_descriptor_set(pipeline_layout, 1, material.descriptors.as_raw());
 
-        // for each model
-        recorder.push(
-            pipeline_layout,
-            vk::ShaderStageFlags::VERTEX,
-            0,
-            &self.model.transform,
-        );
-        self.model.mesh.draw(&recorder);
+            // for each model
+            recorder.push(
+                pipeline_layout,
+                vk::ShaderStageFlags::VERTEX,
+                0,
+                &model.transform,
+            );
+            model.mesh.draw(&recorder);
+        }
 
         Ok(())
     }

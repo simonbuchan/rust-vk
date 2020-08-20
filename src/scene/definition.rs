@@ -3,6 +3,7 @@ use serde::Deserialize;
 
 #[derive(Deserialize)]
 pub struct Scene {
+    pub programs: Vec<Program>,
     pub materials: Vec<Material>,
     #[serde(default)]
     pub textures: Vec<File>,
@@ -11,7 +12,7 @@ pub struct Scene {
 }
 
 #[derive(Deserialize)]
-pub struct Material {
+pub struct Program {
     pub id: u32,
     pub vertex_input: Vec<VertexInputBinding>,
     #[serde(default)]
@@ -101,6 +102,19 @@ impl Into<vk::ShaderStageFlags> for StageType {
             Self::Fragment => vk::ShaderStageFlags::FRAGMENT,
         }
     }
+}
+
+#[derive(Deserialize)]
+pub struct Material {
+    pub id: u32,
+    pub program: u32,
+    pub textures: Vec<MaterialTexture>,
+}
+
+#[derive(Deserialize)]
+pub struct MaterialTexture {
+    pub location: u32,
+    pub texture: u32,
 }
 
 #[derive(Deserialize)]

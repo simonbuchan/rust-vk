@@ -1,4 +1,15 @@
+textures:
+  - id: 1
+    path: assets/TextureCoordinateTemplate.png
+
 materials:
+  - id: 1
+    program: 1
+    textures:
+      - location: 0
+        texture: 1
+
+programs:
   - id: 1
     vertex_input:
       - binding: 0

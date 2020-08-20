@@ -3,7 +3,7 @@ use ash::{prelude::*, vk};
 
 pub struct Mesh {
     pub memory: device::Memory,
-    pub vertex_buffer: device::BufferObject,
+    pub vertex_buffers: Vec<device::BufferObject>,
     pub index_buffer: device::BufferObject,
     pub count: u32,
 }
@@ -46,14 +46,16 @@ impl Mesh {
 
         Ok(Self {
             memory,
-            vertex_buffer,
+            vertex_buffers: vec![vertex_buffer],
             index_buffer,
             count: indices.len() as u32,
         })
     }
 
     pub fn draw(&self, cmd: &device::CommandBufferRenderPassRecorder) {
-        cmd.bind_vertex_buffer(0, self.vertex_buffer.as_raw());
+        for (i, buffer) in self.vertex_buffers.iter().enumerate() {
+            cmd.bind_vertex_buffer(i as u32, buffer.as_raw());
+        }
         cmd.bind_index_buffer(self.index_buffer.as_raw());
         cmd.draw_indexed(self.count);
     }

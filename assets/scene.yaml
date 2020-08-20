@@ -1,14 +1,35 @@
 programs:
   - id: 1
+    vertex_input:
+      - binding: 0
+        stride: 12
+        attributes:
+          - location: 0
+            format: vec3
+            offset: 0
+      - binding: 1
+        stride: 8
+        attributes:
+          - location: 1
+            format: vec2
+            offset: 0
+    descriptors:
+      - binding: 0
+        type: texture
+        stages: [fragment]
     vertex: |
       #version 460
-      layout(set = 0, binding = 0) uniform per_draw { mat4 u_mvp; };
-      layout(binding = 0, location = 0) in vec3 a_pos;
-      layout(binding = 1, location = 0) in vec2 a_uv;
+      layout(set = 0, binding = 0) uniform view {
+        mat4 u_view;
+        mat4 u_proj;
+      };
+      layout(push_constant) uniform draw { mat4 u_model; };
+      layout(location = 0) in vec3 a_pos;
+      layout(location = 1) in vec2 a_uv;
       layout(location = 0) out vec2 v_uv;
       void main() {
         v_uv = a_uv;
-        gl_Position = u_mvp * vec4(a_pos, 1);
+        gl_Position = u_proj * u_view * u_model * vec4(a_pos, 1);
       }
     fragment: |
       #version 460
@@ -18,19 +39,6 @@ programs:
       void main() {
         o_col = texture(u_tex, v_uv);
       }
-    input_bindings:
-      - binding: 0
-        stride: 12
-        attributes:
-          location: 0
-          type: vec3
-          offset: 0
-      - binding: 1
-        stride: 8
-        attributes:
-          location: 0
-          type: vec2
-          offset: 0
 
 buffers:
   - id: 1
@@ -42,7 +50,7 @@ textures:
   - id: 2
     path: BoomBoxWithAxes_baseColor1.png
 
-material:
+materials:
   - id: 1
     program: 1
     textures:

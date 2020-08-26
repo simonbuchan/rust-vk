@@ -222,7 +222,7 @@ function createTorus(bufferId) {
       const ia = v * 2 * Math.PI;
       const [x, y, z] = center.add(Vec3.X_NEG.rotz(ia).muls(innerRadius)).roty(oa);
 
-      const [r, g, b] = rgbFromHsl(oa, 1 - v, 0.5);
+      const [r, g, b] = rgbFromHsl(u * 2 * Math.PI, 1 - v, 0.5);
       builder.vertex(x, y, z, u, v, r, g, b);
     }
   }

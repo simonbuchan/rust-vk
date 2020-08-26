@@ -135,6 +135,13 @@ impl MaterialProgram {
                         .cull_mode(vk::CullModeFlags::BACK)
                         .build(),
                 )
+                .depth_stencil_state(
+                    &vk::PipelineDepthStencilStateCreateInfo::builder()
+                        .depth_test_enable(true)
+                        .depth_write_enable(true)
+                        .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL)
+                        .build(),
+                )
                 .multisample_state(
                     &vk::PipelineMultisampleStateCreateInfo::builder()
                         .rasterization_samples(samples)

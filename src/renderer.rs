@@ -51,6 +51,14 @@ impl Renderer {
                             .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                             .build(),
                         vk::AttachmentDescription::builder()
+                            .format(vk::Format::D32_SFLOAT)
+                            .samples(samples)
+                            .load_op(vk::AttachmentLoadOp::CLEAR)
+                            .store_op(vk::AttachmentStoreOp::DONT_CARE)
+                            .initial_layout(vk::ImageLayout::UNDEFINED)
+                            .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                            .build(),
+                        vk::AttachmentDescription::builder()
                             .format(color_format)
                             .samples(vk::SampleCountFlags::TYPE_1)
                             .load_op(vk::AttachmentLoadOp::DONT_CARE)
@@ -65,8 +73,14 @@ impl Renderer {
                             .attachment(0)
                             .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                             .build()])
+                        .depth_stencil_attachment(
+                            &vk::AttachmentReference::builder()
+                                .attachment(1)
+                                .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                                .build(),
+                        )
                         .resolve_attachments(&[vk::AttachmentReference::builder()
-                            .attachment(1)
+                            .attachment(2)
                             .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                             .build()])
                         .build()])
@@ -140,6 +154,8 @@ impl Renderer {
 #[allow(dead_code)]
 pub struct Swapchain {
     swapchain: Owned<vk::SwapchainKHR>,
+    depth_image: Image,
+    depth_image_view: ImageView,
     color_image: Image,
     color_image_view: ImageView,
     images: Vec<vk::Image>,
@@ -183,6 +199,20 @@ impl Swapchain {
                     .build(),
             )?;
 
+            let depth_image = Image::create_2d(
+                (width, height),
+                1,
+                vk::Format::D32_SFLOAT,
+                samples,
+                vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                MemoryTypeMask::any(),
+            )?;
+            let depth_image_view = ImageView::create_2d(
+                depth_image.object.as_raw(),
+                vk::Format::D32_SFLOAT,
+                vk::ImageAspectFlags::DEPTH,
+            )?;
+
             let color_image = Image::create_2d(
                 (width, height),
                 1,
@@ -212,7 +242,11 @@ impl Swapchain {
                     Owned::create(
                         &vk::FramebufferCreateInfo::builder()
                             .render_pass(render_pass)
-                            .attachments(&[color_image_view.as_raw(), image_view.as_raw()])
+                            .attachments(&[
+                                color_image_view.as_raw(),
+                                depth_image_view.as_raw(),
+                                image_view.as_raw(),
+                            ])
                             .width(width)
                             .height(height)
                             .layers(1)
@@ -223,6 +257,8 @@ impl Swapchain {
 
             Ok(Self {
                 swapchain,
+                depth_image,
+                depth_image_view,
                 color_image,
                 color_image_view,
                 images,

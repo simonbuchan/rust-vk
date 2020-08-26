@@ -111,11 +111,19 @@ impl RenderContext {
             &vk::RenderPassBeginInfo::builder()
                 .render_pass(self.renderer.render_pass.as_raw())
                 .framebuffer(swapchain_item.framebuffer)
-                .clear_values(&[vk::ClearValue {
-                    color: vk::ClearColorValue {
-                        float32: [0.2, 0.5, 0.7, 1.0],
+                .clear_values(&[
+                    vk::ClearValue {
+                        color: vk::ClearColorValue {
+                            float32: [0.2, 0.5, 0.7, 1.0],
+                        },
                     },
-                }])
+                    vk::ClearValue {
+                        depth_stencil: vk::ClearDepthStencilValue {
+                            depth: 1.0,
+                            stencil: 0,
+                        },
+                    },
+                ])
                 .render_area(vk::Rect2D {
                     offset: vk::Offset2D { x: 0, y: 0 },
                     extent: vk::Extent2D { width, height },

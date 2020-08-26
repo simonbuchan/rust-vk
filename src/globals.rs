@@ -180,16 +180,16 @@ unsafe extern "system" fn debug_callback(
         message,
     );
 
-    if message_severity.intersects(
-        vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
-            | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR,
-    ) {
-        extern "system" {
-            fn DebugBreak();
-        }
-        DebugBreak();
-        std::process::exit(1);
-    }
+    // if message_severity.intersects(
+    //     vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
+    //         | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR,
+    // ) {
+    //     extern "system" {
+    //         fn DebugBreak();
+    //     }
+    //     DebugBreak();
+    //     std::process::exit(1);
+    // }
 
     vk::FALSE
 }

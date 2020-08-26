@@ -72,27 +72,39 @@ impl SceneWatcher {
 
     fn check_reload(&mut self) -> Result<()> {
         if let Ok(change) = self.change_receiver.try_recv() {
+            if matches!(
+                change,
+                notify::DebouncedEvent::NoticeWrite(..) | notify::DebouncedEvent::NoticeRemove(..)
+            ) {
+                return Ok(());
+            }
             println!("change: {:?}", change);
 
             while self.change_receiver.try_recv().is_ok() {}
-            let (mut scene, watch_paths) =
-                Scene::parse(self.render_pass, self.samples, &self.path)?;
 
-            for p in &self.watch_paths {
-                self.change_watcher.unwatch(&p).unwrap();
+            match Scene::parse(self.render_pass, self.samples, &self.path) {
+                Err(err) => {
+                    eprintln!("failed to parse: {:?}", err);
+                }
+                Ok((mut scene, watch_paths)) => {
+                    for p in &self.watch_paths {
+                        self.change_watcher.unwatch(&p).unwrap();
+                    }
+                    for p in &watch_paths {
+                        self.change_watcher
+                            .watch(&p, notify::RecursiveMode::NonRecursive)
+                            .unwrap();
+                    }
+
+                    // Preserve aspect ratio (should probably be recomputed each frame?)
+                    scene.camera.projection = self.scene.camera.projection;
+
+                    self.scene = scene;
+                    self.watch_paths = watch_paths;
+                }
             }
-            for p in &watch_paths {
-                self.change_watcher
-                    .watch(&p, notify::RecursiveMode::NonRecursive)
-                    .unwrap();
-            }
-
-            // Preserve aspect ratio (should probably be recomputed each frame?)
-            scene.camera.projection = self.scene.camera.projection;
-
-            self.scene = scene;
-            self.watch_paths = watch_paths;
         }
+
         Ok(())
     }
 
@@ -334,7 +346,7 @@ impl Scene {
         let rotate_around = Quaternion::axis_angle(Vec3::Y_POS, elapsed.as_secs_f32() * 0.3);
         let rotate_down = Quaternion::axis_angle(Vec3::X_NEG, std::f32::consts::FRAC_PI_6);
         self.camera.transform.rotation = rotate_around * rotate_down;
-        self.camera.transform.position = rotate_around.rotate([0.0, 1.5, 3.0].into());
+        self.camera.transform.position = rotate_around.rotate([0.0, 1.5, 4.0].into());
     }
 
     pub fn render(&self, recorder: &device::CommandBufferRenderPassRecorder) -> Result<()> {

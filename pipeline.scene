@@ -14,10 +14,27 @@ meshes:
         buffer: 1
         offset: 1024
         size: 144
+  - name: Torus
+    material: 1
+    bindings:
+      - binding: 0
+        view:
+          buffer: 2
+          offset: 0
+          size: 46800
+    indices:
+      count: 1728
+      format: u32
+      view:
+        buffer: 2
+        offset: 46848
+        size: 6912
 
 buffers:
   - id: 1
     path: box.bin
+  - id: 2
+    path: torus.bin
 
 textures:
   - id: 1

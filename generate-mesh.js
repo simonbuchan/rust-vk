@@ -1,3 +1,5 @@
+const { writeFileSync } = require("fs");
+
 class Vec3 extends Float32Array {
   static X_POS = new Vec3(1, 0, 0);
   static Y_POS = new Vec3(0, 1, 0);
@@ -6,19 +8,65 @@ class Vec3 extends Float32Array {
   static Y_NEG = new Vec3(0, -1, 0);
   static Z_NEG = new Vec3(0, 0, -1);
 
-  /**
-   * Cross product
-   * @param {Vec3} l
-   * @param {Vec3} r
-   * @returns {Vec3}
-   */
-  static cross([lx, ly, lz], [rx, ry, rz]) {
-    return new Vec3(ly * rz - lz * ry, lz * rx - lx * rz, lx * ry - ly * rx);
-  }
-
   constructor(...args) {
     super(3);
     this.set(args);
+  }
+
+  /**
+   * Cross product
+   * @param {Vec3} r
+   * @returns {Vec3}
+   */
+  cross([rx, ry, rz]) {
+    const [lx, ly, lz] = this;
+    return new Vec3(ly * rz - lz * ry, lz * rx - lx * rz, lx * ry - ly * rx);
+  }
+
+  /**
+   * Scalar multiplication.
+   * @param {number} s Scalar.
+   * @return {Vec3}
+   */
+  muls(s) {
+    const [x, y, z] = this;
+    return new Vec3(x * s, y * s, z * s);
+  }
+
+  /**
+   * Rotate around X.
+   * @param {number} a Angle in radians.
+   * @return {Vec3}
+   */
+  rotx(a) {
+    const [x, y, z] = this;
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    return new Vec3(x, y * c + z * s, y * -s + z * c);
+  }
+
+  /**
+   * Rotate around Y.
+   * @param {number} a Angle in radians.
+   * @return {Vec3}
+   */
+  roty(a) {
+    const [x, y, z] = this;
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    return new Vec3(x * c - z * s, y, x * s + z * c);
+  }
+
+  /**
+   * Rotate around Z.
+   * @param {number} a Angle in radians.
+   * @return {Vec3}
+   */
+  rotz(a) {
+    const [x, y, z] = this;
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    return new Vec3(x * c + y * s, x * -s + y * c, z);
   }
 
   /**
@@ -54,7 +102,67 @@ function align(value, alignment) {
   return (value + mask) & ~mask;
 }
 
-function createBoxMesh() {
+function meshBuilder(vertexCount, indexCount, bufferIndex) {
+  const vertexSize = 4 * 3 + 4 * 2 + 4 * 4;
+  const vertexEnd = vertexCount * vertexSize;
+  const indexStart = align(vertexEnd, 0x100);
+  const indexSize = 4;
+  const dataSize = indexStart + indexCount * indexSize;
+  const data = new DataView(new ArrayBuffer(dataSize));
+
+  let vertexIndex = 0;
+  let indexIndex = 0;
+
+  return {
+    log(name) {
+      console.log(`\
+  - name: ${name}
+    material: 1
+    bindings:
+      - binding: 0
+        view:
+          buffer: ${bufferIndex}
+          offset: 0
+          size: ${vertexEnd}
+    indices:
+      count: ${indexCount}
+      format: u32
+      view:
+        buffer: ${bufferIndex}
+        offset: ${indexStart}
+        size: ${dataSize - indexStart}`);
+    },
+
+    vertex(x, y, z, u, v, r, g, b, a = 1) {
+      let vertexOffset = vertexIndex * vertexSize;
+      // pos
+      data.setFloat32(vertexOffset, x, true);
+      data.setFloat32(vertexOffset += 4, y, true);
+      data.setFloat32(vertexOffset += 4, z, true);
+      // uv
+      data.setFloat32(vertexOffset += 4, u, true);
+      data.setFloat32(vertexOffset += 4, v, true);
+      // color
+      data.setFloat32(vertexOffset += 4, r, true);
+      data.setFloat32(vertexOffset += 4, g, true);
+      data.setFloat32(vertexOffset += 4, b, true);
+      data.setFloat32(vertexOffset += 4, a, true);
+      return vertexIndex++;
+    },
+
+    indices(...values) {
+      for (const value of values) {
+        data.setUint32(indexStart + indexIndex++ * indexSize, value, true);
+      }
+    },
+
+    write(path) {
+      writeFileSync(path, Buffer.from(data.buffer));
+    }
+  };
+}
+
+function createBox(bufferId) {
   const faces = [
     [Vec3.X_POS, Vec3.Y_POS],
     [Vec3.X_NEG, Vec3.Y_POS],
@@ -66,60 +174,83 @@ function createBoxMesh() {
 
   const faceCount = faces.length;
 
-  const vertexSize = 4 * 3 + 4 * 2 + 4 * 4;
-  const vertexCount = 4 * faceCount;
-  const vertexEnd = vertexCount * vertexSize;
-  const indexStart = align(vertexEnd, 0x100);
-  const indexSize = 4;
-  const indexCount = 6 * faceCount;
-  const dataSize = indexStart + indexCount * indexSize;
-  const data = new DataView(new ArrayBuffer(dataSize));
+  const builder = meshBuilder(4 * faceCount, 6 * faceCount, bufferId);
 
-  console.log({ vertexEnd, indexStart, indexSize: dataSize - indexStart, dataSize });
+  builder.log('Box');
 
-  for (let fi = 0; fi !== faces.length; fi++) {
-    const [out, up] = faces[fi];
-    const right = Vec3.cross(up, out);
-    const bl = out.sub(up).sub(right);
-    const br = out.sub(up).add(right);
-    const tl = out.add(up).sub(right);
-    const tr = out.add(up).add(right);
+  for (const [out, up] of faces) {
+    const right = up.cross(out);
 
-    vertex(0, tl, 0, 0);
-    vertex(1, tr, 1, 0);
-    vertex(2, bl, 0, 1);
-    vertex(3, br, 1, 1);
-    function vertex(vi, pos, u, v) {
-      const i = fi * 4 + vi;
-      let vertexOffset = i * vertexSize;
-      // pos
-      data.setFloat32(vertexOffset, pos[0], true);
-      data.setFloat32(vertexOffset + 4, pos[1], true);
-      data.setFloat32(vertexOffset + 8, pos[2], true);
-      // uv
-      data.setFloat32(vertexOffset + 12, u, true);
-      data.setFloat32(vertexOffset + 16, v, true);
-      // color
-      data.setFloat32(vertexOffset + 20, (pos[0] + 1) * 0.5, true);
-      data.setFloat32(vertexOffset + 24, (pos[1] + 1) * 0.5, true);
-      data.setFloat32(vertexOffset + 28, (pos[2] + 1) * 0.5, true);
-      data.setFloat32(vertexOffset + 32, 1, true);
+    function vertex([x, y, z], u, v) {
+      const r = (x + 1) * 0.5;
+      const g = (y + 1) * 0.5;
+      const b = (z + 1) * 0.5;
+      return builder.vertex(x, y, z, u, v, r, g, b);
     }
 
-    let vi = fi * 4;
-
-    let indexOffset = indexStart + fi * 6 * indexSize;
-    // indices: TL, BR, TR
-    data.setUint32(indexOffset, vi, true);
-    data.setUint32(indexOffset + 4, vi + 2, true);
-    data.setUint32(indexOffset + 8, vi + 1, true);
-    // indices: TR, BL, BR
-    data.setUint32(indexOffset + 12, vi + 1, true);
-    data.setUint32(indexOffset + 16, vi + 2, true);
-    data.setUint32(indexOffset + 20, vi + 3, true);
+    const tl = vertex(out.add(up).sub(right), 0, 0);
+    const tr = vertex(out.add(up).add(right), 1, 0);
+    const bl = vertex(out.sub(up).sub(right), 0, 1);
+    const br = vertex(out.sub(up).add(right), 1, 1);
+    builder.indices(tl, bl, tr);
+    builder.indices(tr, bl, br);
   }
 
-  return data.buffer;
+  builder.write('box.bin');
 }
 
-require("fs").writeFileSync("box.bin", Buffer.from(createBoxMesh()));
+function createTorus(bufferId) {
+  const outerCount = 24;
+  const outerRadius = 2;
+  const innerCount = 12;
+  const innerRadius = 0.5;
+  const builder = meshBuilder(
+    (outerCount + 1) * (innerCount + 1) * 4,
+    outerCount * innerCount * 6,
+    bufferId,
+  );
+
+  builder.log('Torus');
+
+  for (let o = 0; o !== outerCount + 1; o++) {
+    const u = o / outerCount;
+    const oa = -u * 2 * Math.PI;
+    const center = Vec3.X_POS.muls(outerRadius);
+
+    for (let i = 0; i !== innerCount + 1; i++) {
+      const v = i / innerCount;
+      const ia = v * 2 * Math.PI;
+      const [x, y, z] = center.add(Vec3.X_NEG.rotz(ia).muls(innerRadius)).roty(oa);
+
+      const [r, g, b] = rgbFromHsl(oa, 1 - v, 0.5);
+      builder.vertex(x, y, z, u, v, r, g, b);
+    }
+  }
+
+  for (let o = 0; o !== outerCount; o++) {
+    for (let i = 0; i !== innerCount; i++) {
+      const br = o * (innerCount + 1) + i;
+      const bl = br + (innerCount + 1);
+      const tl = bl + 1;
+      const tr = br + 1;
+      builder.indices(tl, bl, tr);
+      builder.indices(tr, bl, br);
+    }
+  }
+
+  builder.write('torus.bin');
+}
+
+function rgbFromHsl(h, s, l) {
+  const a = s * Math.min(l, 1 - l);
+
+  function f(n) {
+    const k = (n + h * 6 / Math.PI) % 12;
+    return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+  }
+
+  return [f(0), f(8), f(4)];
+}
+
+// createBox(1);
+createTorus(2);

@@ -149,16 +149,25 @@ pub struct MeshIndices {
     pub view: BufferView,
 }
 
-#[derive(Deserialize)]
+#[derive(Copy, Clone, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum MeshIndexFormat {
     U16,
     U32,
 }
 
+impl From<MeshIndexFormat> for vk::IndexType {
+    fn from(value: MeshIndexFormat) -> Self {
+        match value {
+            MeshIndexFormat::U16 => Self::UINT16,
+            MeshIndexFormat::U32 => Self::UINT32,
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub struct BufferView {
     pub buffer: u32,
-    pub offset: u32,
-    pub size: u32,
+    pub offset: u64,
+    pub size: u64,
 }

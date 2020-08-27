@@ -42,13 +42,13 @@ programs:
 
 buffers:
   - id: 1
-    path: BoomBoxWithAxes.bin
+    path: assets/BoomBoxWithAxes.bin
 
 textures:
   - id: 1
-    path: BoomBoxWithAxes_baseColor.png
+    path: assets/BoomBoxWithAxes_baseColor.png
   - id: 2
-    path: BoomBoxWithAxes_baseColor1.png
+    path: assets/BoomBoxWithAxes_baseColor1.png
 
 materials:
   - id: 1
@@ -70,19 +70,19 @@ meshes:
         view:
           buffer: 1
           offset: 239316
-          length: 10500
+          size: 10500
       - binding: 1
         view:
           buffer: 1
           offset: 207816
-          length: 7000
+          size: 7000
     indices:
       count: 3420
-      type: u16
+      format: u16
       view:
         buffer: 1
         offset: 249816
-        length: 6840
+        size: 6840
   - name: X_axis
     material: 2
     bindings:
@@ -90,16 +90,16 @@ meshes:
         view:
           buffer: 1
           offset: 337728
-          length: 27024
+          size: 27024
       - binding: 1
         view:
           buffer: 1
           offset: 256656
-          length: 18016
+          size: 18016
     indices:
       count: 11064
-      type: u16
+      format: u16
       view:
         buffer: 1
         offset: 364752
-        length: 22128
+        size: 22128

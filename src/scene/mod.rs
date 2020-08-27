@@ -10,6 +10,7 @@ use crate::math::*;
 use crate::resources;
 use crate::scene::camera::Projection;
 use notify::Watcher;
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
 mod camera;
@@ -127,7 +128,7 @@ pub struct Scene {
     programs: BTreeMap<u32, material::MaterialProgram>,
     materials: BTreeMap<u32, material::Material>,
     textures: BTreeMap<u32, resources::Texture>,
-    memories: BTreeMap<u32, device::Memory>,
+    memories: Vec<device::Memory>,
     models: Vec<Model>,
     descriptor_pool: device::DescriptorPool,
     view_set: device::DescriptorSet,
@@ -162,7 +163,7 @@ impl Scene {
         }
 
         let descriptor_pool = device::DescriptorPool::create(
-            2,
+            3,
             &[
                 vk::DescriptorPoolSize {
                     ty: vk::DescriptorType::UNIFORM_BUFFER,
@@ -170,7 +171,7 @@ impl Scene {
                 },
                 vk::DescriptorPoolSize {
                     ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                    descriptor_count: 1,
+                    descriptor_count: 2,
                 },
             ],
         )?;
@@ -184,16 +185,43 @@ impl Scene {
             let (info, mut reader) =
                 png::Decoder::new(std::fs::File::open(&t.path)?).read_info()?;
 
-            let texture_buffer_size = reader.output_buffer_size();
-            let texture_buffer = device::Buffer::create(
-                texture_buffer_size as vk::DeviceSize,
-                vk::BufferUsageFlags::TRANSFER_SRC,
-            )?;
-            let mut mapping = texture_buffer.memory.map(0, texture_buffer_size)?;
-            reader.next_frame(mapping.slice(0, texture_buffer_size))?;
-            drop(mapping);
+            let (texture_buffer, format) = match info.color_type {
+                // https://github.com/image-rs/image-png/issues/239
+                png::ColorType::RGB => {
+                    let texture_buffer_size = (info.width * info.height * 4) as usize;
+                    let texture_buffer = device::Buffer::create(
+                        texture_buffer_size as vk::DeviceSize,
+                        vk::BufferUsageFlags::TRANSFER_SRC,
+                    )?;
+                    let mut mapping = texture_buffer.memory.map(0, texture_buffer_size)?;
+                    let mut off = 0;
+                    println!(
+                        "expanding RGB -> RGBA: {}x{} = {:#x} bytes",
+                        info.width, info.height, texture_buffer_size
+                    );
+                    while let Some(row) = reader.next_row()? {
+                        for x in 0..info.width as usize {
+                            mapping.write_slice(off, &row[x * 3..x * 3 + 3]);
+                            mapping.write(off + 3, &0xffu8);
+                            off += 4;
+                        }
+                    }
+                    (texture_buffer, vk::Format::R8G8B8A8_UNORM)
+                }
+                png::ColorType::RGBA => {
+                    let texture_buffer_size = reader.output_buffer_size();
+                    let texture_buffer = device::Buffer::create(
+                        texture_buffer_size as vk::DeviceSize,
+                        vk::BufferUsageFlags::TRANSFER_SRC,
+                    )?;
+                    let mut mapping = texture_buffer.memory.map(0, texture_buffer_size)?;
+                    reader.next_frame(mapping.slice(0, texture_buffer_size))?;
+                    (texture_buffer, vk::Format::R8G8B8A8_UNORM)
+                }
+                _ => unimplemented!("png::ColorType::{:?}", info.color_type),
+            };
 
-            let texture = resources::Texture::create(info.width, info.height)?;
+            let texture = resources::Texture::create(info.width, info.height, format)?;
             texture.copy_from(texture_buffer.as_raw(), 0)?;
             textures.insert(t.id, texture);
         }
@@ -229,87 +257,44 @@ impl Scene {
             );
         }
 
-        let mut buffer_reqs = BTreeMap::new();
+        let mut buffer_files = BTreeMap::new();
+        let mut memories = Vec::new();
 
-        fn buffer_view(
-            buffer_reqs: &mut BTreeMap<u32, vk::MemoryRequirements>,
-            view: &definition::BufferView,
-            usage: vk::BufferUsageFlags,
-        ) -> VkResult<device::BufferObject> {
-            let mut buffer_req =
-                buffer_reqs
-                    .entry(view.buffer)
-                    .or_insert_with(|| vk::MemoryRequirements {
-                        memory_type_bits: device::MemoryTypeMask::mappable().0,
-                        size: 0,
-                        alignment: 1,
-                    });
-            let buffer = device::BufferObject::create(view.size as vk::DeviceSize, usage)?;
-
-            let req = buffer.memory_requirements();
-            buffer_req.size = buffer_req
-                .size
-                .max(view.offset as vk::DeviceSize + req.size);
-            buffer_req.alignment = buffer_req.alignment.max(req.alignment);
-            buffer_req.memory_type_bits &= req.memory_type_bits;
-
-            Ok(buffer)
+        for b in &scene.buffers {
+            buffer_files.insert(b.id, std::fs::File::open(&b.path)?);
+            paths.push(PathBuf::from(&b.path));
         }
+
+        let mut buffer_view = |view: &definition::BufferView,
+                               usage: vk::BufferUsageFlags|
+         -> Result<device::BufferObject> {
+            let mut file = &buffer_files[&view.buffer];
+            let buffer = device::Buffer::create(view.size, usage)?;
+            let mut mapping = buffer.memory.map(0, view.size as usize)?;
+            file.seek(std::io::SeekFrom::Start(view.offset))?;
+            file.read_exact(mapping.slice(0, view.size as usize))?;
+            drop(mapping);
+            memories.push(buffer.memory);
+            Ok(buffer.object)
+        };
 
         let mut models = Vec::new();
         for m in &scene.meshes {
             let mut vertex_buffers = Vec::new();
             for b in &m.bindings {
-                vertex_buffers.push(buffer_view(
-                    &mut buffer_reqs,
-                    &b.view,
-                    vk::BufferUsageFlags::VERTEX_BUFFER,
-                )?);
+                vertex_buffers.push(buffer_view(&b.view, vk::BufferUsageFlags::VERTEX_BUFFER)?);
             }
-            let index_buffer = buffer_view(
-                &mut buffer_reqs,
-                &m.indices.view,
-                vk::BufferUsageFlags::INDEX_BUFFER,
-            )?;
+            let index_buffer = buffer_view(&m.indices.view, vk::BufferUsageFlags::INDEX_BUFFER)?;
             models.push(Model {
                 transform: Mat4::IDENTITY,
                 material: m.material,
                 mesh: resources::MeshObject {
                     vertex_buffers,
                     index_buffer,
-                    count: m.indices.count,
+                    index_type: m.indices.format.into(),
+                    index_count: m.indices.count,
                 },
             });
-        }
-
-        let mut memories = BTreeMap::new();
-        for b in &scene.buffers {
-            paths.push(PathBuf::from(&b.path));
-
-            if let Some(req) = buffer_reqs.get(&b.id) {
-                let data = std::fs::read(&b.path)?;
-                let memory = device::Memory::allocate_mappable(
-                    req.size,
-                    device::MemoryTypeMask(req.memory_type_bits),
-                )?;
-                memory.write_slice(0, &data)?;
-                memories.insert(b.id, memory);
-            }
-        }
-
-        for (m, d) in models.iter().zip(scene.meshes) {
-            fn bind(
-                memories: &BTreeMap<u32, device::Memory>,
-                object: &device::BufferObject,
-                view: &definition::BufferView,
-            ) -> VkResult<()> {
-                object.bind_memory(&memories[&view.buffer], view.offset as vk::DeviceSize)
-            }
-
-            for (o, b) in m.mesh.vertex_buffers.iter().zip(d.bindings) {
-                bind(&memories, o, &b.view)?;
-            }
-            bind(&memories, &m.mesh.index_buffer, &d.indices.view)?;
         }
 
         view_set.update_buffer(
@@ -383,11 +368,13 @@ impl Scene {
     }
 }
 
+#[allow(dead_code)]
 struct MeshBuilder<V: Copy> {
     vertices: Vec<V>,
     indices: Vec<u32>,
 }
 
+#[allow(dead_code)]
 impl<V: Copy> MeshBuilder<V> {
     pub fn new() -> Self {
         Self {

@@ -188,13 +188,25 @@ impl Drop for MemoryMapping {
 impl MemoryMapping {
     pub fn write<T: Copy + ?Sized>(&mut self, offset: usize, src: &T) {
         let len = std::mem::size_of_val(src);
-        assert!(offset + len <= self.size);
+        assert!(
+            offset + len <= self.size,
+            "offset = {:#x}, len = {:#x}, size = {:#x}",
+            offset,
+            len,
+            self.size,
+        );
         let ptr = unsafe { self.ptr.add(offset) };
         unsafe { std::ptr::copy_nonoverlapping(src as *const T as *const c_void, ptr, len) };
     }
 
     pub fn slice<T: Copy>(&mut self, offset: usize, len: usize) -> &mut [T] {
-        assert!(offset + len <= self.size);
+        assert!(
+            offset + len <= self.size,
+            "offset = {:#x}, len = {:#x}, size = {:#x}",
+            offset,
+            len,
+            self.size,
+        );
         let ptr = unsafe { self.ptr.add(offset) }.cast();
         unsafe { std::slice::from_raw_parts_mut::<T>(ptr, len) }
     }

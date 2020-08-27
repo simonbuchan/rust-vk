@@ -10,7 +10,7 @@ pub struct Renderer {
     swapchain: Swapchain,
 }
 
-fn get_format_and_samples(surface: vk::SurfaceKHR) -> Result<(vk::Format, vk::SampleCountFlags)> {
+fn get_format_and_samples(_surface: vk::SurfaceKHR) -> Result<(vk::Format, vk::SampleCountFlags)> {
     unsafe {
         // let surface_formats =
         //     ext::SURFACE.get_physical_device_surface_formats(PHYSICAL_DEVICE, surface)?;

@@ -267,8 +267,8 @@ impl CommandBufferRenderPassRecorder {
         unsafe { DEVICE.cmd_bind_vertex_buffers(self.as_raw(), binding, &[buffer], &[0]) };
     }
 
-    pub fn bind_index_buffer(&self, buffer: vk::Buffer) {
-        unsafe { DEVICE.cmd_bind_index_buffer(self.as_raw(), buffer, 0, vk::IndexType::UINT32) };
+    pub fn bind_index_buffer(&self, buffer: vk::Buffer, index_type: vk::IndexType) {
+        unsafe { DEVICE.cmd_bind_index_buffer(self.as_raw(), buffer, 0, index_type) };
     }
 
     pub fn draw(&self, vertex_count: u32) {

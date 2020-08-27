@@ -4,7 +4,8 @@ use ash::{prelude::*, vk};
 pub struct MeshObject {
     pub vertex_buffers: Vec<device::BufferObject>,
     pub index_buffer: device::BufferObject,
-    pub count: u32,
+    pub index_type: vk::IndexType,
+    pub index_count: u32,
 }
 
 impl MeshObject {
@@ -12,8 +13,8 @@ impl MeshObject {
         for (i, buffer) in self.vertex_buffers.iter().enumerate() {
             cmd.bind_vertex_buffer(i as u32, buffer.as_raw());
         }
-        cmd.bind_index_buffer(self.index_buffer.as_raw());
-        cmd.draw_indexed(self.count);
+        cmd.bind_index_buffer(self.index_buffer.as_raw(), self.index_type);
+        cmd.draw_indexed(self.index_count);
     }
 }
 
@@ -63,7 +64,8 @@ impl Mesh {
             object: MeshObject {
                 vertex_buffers: vec![vertex_buffer],
                 index_buffer,
-                count: indices.len() as u32,
+                index_type: vk::IndexType::UINT32,
+                index_count: indices.len() as u32,
             },
         })
     }

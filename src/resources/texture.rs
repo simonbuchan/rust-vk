@@ -10,11 +10,11 @@ pub struct Texture {
 }
 
 impl Texture {
-    pub fn create(width: u32, height: u32) -> VkResult<Texture> {
+    pub fn create(width: u32, height: u32, format: vk::Format) -> VkResult<Texture> {
         let image = device::Image::create_2d(
             (width, height),
             device::mip_levels((width, height)),
-            vk::Format::R8G8B8A8_UNORM,
+            format,
             vk::SampleCountFlags::TYPE_1,
             vk::ImageUsageFlags::TRANSFER_SRC
                 | vk::ImageUsageFlags::TRANSFER_DST
@@ -24,7 +24,7 @@ impl Texture {
 
         let image_view = device::ImageView::create_2d(
             image.object.as_raw(),
-            vk::Format::R8G8B8A8_UNORM,
+            format,
             vk::ImageAspectFlags::COLOR,
         )?;
 

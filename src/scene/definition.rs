@@ -8,7 +8,7 @@ pub struct Scene {
     #[serde(default)]
     pub materials: Vec<Material>,
     #[serde(default)]
-    pub textures: Vec<File>,
+    pub textures: Vec<TextureFile>,
     #[serde(default)]
     pub buffers: Vec<File>,
     #[serde(default)]
@@ -122,6 +122,35 @@ pub struct MaterialTexture {
 }
 
 #[derive(Deserialize)]
+pub struct TextureFile {
+    pub id: u32,
+    pub format: TextureFormat,
+    #[serde(default)]
+    pub space: TextureColorSpace,
+    pub path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TextureFormat {
+    Png,
+    Ktx,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TextureColorSpace {
+    Linear,
+    Srgb,
+}
+
+impl Default for TextureColorSpace {
+    fn default() -> Self {
+        Self::Linear
+    }
+}
+
+#[derive(Deserialize)]
 pub struct File {
     pub id: u32,
     pub path: String,
@@ -129,11 +158,63 @@ pub struct File {
 
 #[derive(Deserialize)]
 pub struct Mesh {
+    // pub id: u32,
     // pub name: String,
+    #[serde(default)]
+    pub transform: Transform,
     pub material: u32,
     #[serde(default)]
     pub bindings: Vec<MeshBinding>,
     pub indices: MeshIndices,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub enum Transform {
+    Literal([[f32; 4]; 4]),
+    TRS {
+        #[serde(default)]
+        translation: Option<[f32; 3]>,
+        #[serde(default)]
+        rotation: Option<[f32; 4]>,
+        #[serde(default)]
+        scale: Option<[f32; 3]>,
+    },
+    Identity,
+}
+
+impl Default for Transform {
+    fn default() -> Self {
+        Self::Identity
+    }
+}
+
+impl From<&Transform> for crate::math::Mat4 {
+    fn from(value: &Transform) -> Self {
+        match value {
+            Transform::Literal([x, y, z, w]) => {
+                Self::from([(*x).into(), (*y).into(), (*z).into(), (*w).into()])
+            }
+            Transform::TRS {
+                translation,
+                rotation,
+                scale,
+            } => {
+                let mut value = Self::IDENTITY;
+                if let Some(&t) = translation.as_ref() {
+                    value = value * Self::translate(t.into());
+                }
+                if let Some(&r) = rotation.as_ref() {
+                    value = value * Self::rotate(r.into());
+                }
+                if let Some(&s) = scale.as_ref() {
+                    value = value * Self::scale(s.into());
+                }
+                value
+            }
+            Transform::Identity => Self::IDENTITY,
+        }
+    }
 }
 
 #[derive(Deserialize)]

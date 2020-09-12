@@ -64,6 +64,37 @@ impl ImageObject {
         }
     }
 
+    pub fn create_cube(
+        (width, height): (u32, u32),
+        mip_levels: u32,
+        format: vk::Format,
+        usage: vk::ImageUsageFlags,
+    ) -> VkResult<Self> {
+        unsafe {
+            let owned = Owned::create(
+                &vk::ImageCreateInfo::builder()
+                    .flags(vk::ImageCreateFlags::CUBE_COMPATIBLE)
+                    .image_type(vk::ImageType::TYPE_2D)
+                    .format(format)
+                    .extent(vk::Extent3D {
+                        width,
+                        height,
+                        depth: 1,
+                    })
+                    .mip_levels(mip_levels)
+                    .array_layers(6)
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .usage(usage)
+                    .queue_family_indices(&[GRAPHICS_QUEUE_FAMILY_INDEX])
+                    .initial_layout(vk::ImageLayout::UNDEFINED)
+                    .build(),
+            )?;
+
+            Ok(Self(owned))
+        }
+    }
+
     pub fn memory_requirements(&self) -> vk::MemoryRequirements {
         unsafe { DEVICE.get_image_memory_requirements(self.as_raw()) }
     }
@@ -87,19 +118,22 @@ impl Image {
         usage: vk::ImageUsageFlags,
         memory_type_mask: MemoryTypeMask,
     ) -> VkResult<Self> {
-        let image = ImageObject::create_2d(size, mip_levels, format, samples, usage)?;
-        let memory_requirements = image.memory_requirements();
+        Self::create(
+            ImageObject::create_2d(size, mip_levels, format, samples, usage)?,
+            memory_type_mask,
+        )
+    }
+
+    pub fn create(object: ImageObject, memory_type_mask: MemoryTypeMask) -> VkResult<Self> {
+        let memory_requirements = object.memory_requirements();
 
         let memory = Memory::allocate(
             memory_requirements.size,
             (MemoryTypeMask(memory_requirements.memory_type_bits) & memory_type_mask).first_index(),
         )?;
 
-        image.bind_memory(memory.as_raw())?;
+        object.bind_memory(memory.as_raw())?;
 
-        Ok(Self {
-            object: image,
-            memory,
-        })
+        Ok(Self { object, memory })
     }
 }

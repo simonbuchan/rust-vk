@@ -75,7 +75,7 @@ impl RenderContext {
         let mut scene = scene::SceneWatcher::create(
             renderer.render_pass.as_raw(),
             renderer.samples,
-            std::path::Path::new("pipeline.scene"),
+            std::path::Path::new("assets/scene.yaml"),
         )?;
         scene.resize(size);
 

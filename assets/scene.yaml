@@ -8,6 +8,196 @@ programs:
             format: vec3
             offset: 0
       - binding: 1
+        stride: 12
+        attributes:
+          - location: 1
+            format: vec3
+            offset: 0
+      - binding: 2
+        stride: 16
+        attributes:
+          - location: 2
+            format: vec4
+            offset: 0
+      - binding: 3
+        stride: 8
+        attributes:
+          - location: 3
+            format: vec2
+            offset: 0
+    descriptors:
+      - binding: 0
+        type: texture
+        stages: [fragment]
+      - binding: 1
+        type: texture
+        stages: [fragment]
+      - binding: 2
+        type: texture
+        stages: [fragment]
+      - binding: 3
+        type: texture
+        stages: [fragment]
+      - binding: 4
+        type: texture
+        stages: [fragment]
+      - binding: 5
+        type: texture
+        stages: [fragment]
+      - binding: 6
+        type: texture
+        stages: [fragment]
+
+    # language=glsl
+    vertex: |
+      #version 460
+      layout(set = 0, binding = 0) uniform view {
+        mat4 u_view;
+        mat4 u_proj;
+        vec3 u_camera;
+      };
+      layout(push_constant) uniform draw { mat4 u_model; };
+      layout(location = 0) in vec3 a_position;
+      layout(location = 1) in vec3 a_normal;
+      layout(location = 2) in vec4 a_tangent;
+      layout(location = 3) in vec2 a_uv;
+      layout(location = 0) out vec3 v_position;
+      layout(location = 1) out vec2 v_uv;
+      layout(location = 2) out mat3 v_tbn;
+
+      void main() {
+        vec4 pos = u_model * vec4(a_position, 1);
+        v_position = pos.xyz / pos.w;
+        gl_Position = u_proj * u_view * pos;
+        v_uv = a_uv;
+        mat3 m = mat3(u_model); // removes translation
+        v_tbn = mat3(
+          normalize(m * a_tangent.xyz),
+          normalize(m * cross(a_normal, a_tangent.xyz)),
+          normalize(m * a_normal));
+      }
+
+    # language=glsl
+    fragment: |
+      #version 460
+      layout(set = 0, binding = 0) uniform view {
+        mat4 u_view;
+        mat4 u_proj;
+        vec3 u_camera;
+      };
+      layout(push_constant) uniform draw { mat4 u_model; };
+      layout(set = 1, binding = 0) uniform sampler2D u_baseColor;
+      layout(set = 1, binding = 1) uniform sampler2D u_roughnessMetallic;
+      layout(set = 1, binding = 2) uniform sampler2D u_normal;
+      layout(set = 1, binding = 3) uniform sampler2D u_emissive;
+      layout(set = 1, binding = 4) uniform samplerCube u_ibl_diffuse;
+      layout(set = 1, binding = 5) uniform samplerCube u_ibl_specular;
+      layout(set = 1, binding = 6) uniform sampler2D u_ibl_lut;
+      layout(location = 0) in vec3 v_position;
+      layout(location = 1) in vec2 v_uv;
+      layout(location = 2) in mat3 v_tbn;
+      layout(location = 0) out vec4 o_color;
+
+      // trying to implement PBR from:
+      // https://github.com/KhronosGroup/glTF/blob/master/specification/2.0/README.md#appendix-b-brdf-implementation
+
+      const float PI = 3.1415926535897932384626433832795;
+
+      const vec3 light_direction = normalize(vec3(1, 1, 0));
+
+      vec3 srgb_to_linear(vec3 value) {
+        return pow(value, vec3(2.2));
+      }
+
+      vec4 srgb_to_linear(vec4 value) {
+        return vec4(srgb_to_linear(value.rgb), value.a);
+      }
+
+      // Surface Reflection Ratio: Fresnel Schlick
+      vec3 fresnel(vec3 f0, vec3 f90, float vh) {
+        return f0 + (f90 - f0) * pow(clamp(1 - vh, 0, 1), 5);
+      }
+
+      // Diffuse: Lambert
+      vec3 lambertian(vec3 f0, vec3 f90, vec3 c_diffuse, float vh) {
+        return (1 - fresnel(f0, f90, vh)) * (c_diffuse / PI);
+      }
+
+      // Geometric Occlusion: Smith Joint GGX
+      float V_GGX(float nl, float nv, float alpha2) {
+        float ggx_v = nl * sqrt(nv * nv * (1 - alpha2) + alpha2);
+        float ggx_l = nv * sqrt(nl * nl * (1 - alpha2) + alpha2);
+        float ggx = ggx_v + ggx_l;
+        return max(0, 0.5 / ggx);
+      }
+
+      // Microfacet Distribution: Towbridge-Reitz
+      float D_GGX(float nh, float alpha2) {
+        float f = nh * nh * (alpha2 - 1) + 1;
+        return alpha2 / (PI * f * f);
+      }
+
+      vec3 metallic_specular(vec3 f0, float roughness, float vh, float nl, float nv, float nh) {
+        float alpha = roughness * roughness;
+        float alpha2 = alpha * alpha;
+        vec3 F = fresnel(f0, vec3(1), vh);
+        float Vis = V_GGX(nl, nv, alpha2);
+        float D = D_GGX(nh, alpha2);
+        return F * Vis * D;
+      }
+
+      void main() {
+        vec3 normalSample = texture(u_normal, v_uv).xyz;
+        vec4 baseColor = texture(u_baseColor, v_uv);
+        vec4 roughnessMetallic = texture(u_roughnessMetallic, v_uv);
+        float roughness = roughnessMetallic.g;
+        float metallic = roughnessMetallic.b;
+
+        vec3 emissive = texture(u_emissive, v_uv).rgb;
+
+        mat3 tbn = mat3(normalize(v_tbn[0]),
+                        normalize(v_tbn[1]),
+                        normalize(v_tbn[2]));
+
+        const float dielectricSpecular = 0.02;
+        vec3 c_diffuse = mix(baseColor.rgb * (1 - dielectricSpecular), vec3(0), metallic);
+        vec3 f0 = mix(dielectricSpecular.rrr, baseColor.rgb, metallic);
+        vec3 f90 = vec3(1); // vec3(clamp(max(max(f0.r, f0.g), f0.b), 0, 1));
+        vec3 v = normalize(u_camera - v_position);
+        vec3 l = light_direction;
+        vec3 h = normalize(l + v);
+        vec3 n = tbn * normalize(normalSample * 2 - 1);
+
+        float vh = clamp(dot(v, h), 0, 1);
+        float nl = clamp(dot(n, l), 0, 1);
+        float nv = clamp(dot(n, v), 0, 1);
+        float nh = clamp(dot(n, h), 0, 1);
+
+        vec3 color = vec3(0);
+
+        // color += nl * lambertian(f0, f90, c_diffuse, vh);
+        // color *= nl * metallic_specular(f0, roughness, vh, nl, nv, nh);
+
+        color += c_diffuse * texture(u_ibl_diffuse, n).rgb;
+        vec4 lut = texture(u_ibl_lut, vec2(nv, roughness));
+        color += (f0 * lut.x + lut.y) * textureLod(
+          u_ibl_specular,
+          reflect(-v, n),
+          roughness * textureQueryLevels(u_ibl_specular)).rgb;
+
+        color += emissive;
+        o_color = vec4(color, baseColor.a);
+      }
+
+  - id: 2
+    vertex_input:
+      - binding: 0
+        stride: 12
+        attributes:
+          - location: 0
+            format: vec3
+            offset: 0
+      - binding: 1
         stride: 8
         attributes:
           - location: 1
@@ -27,6 +217,7 @@ programs:
       layout(location = 0) in vec3 a_pos;
       layout(location = 1) in vec2 a_uv;
       layout(location = 0) out vec2 v_uv;
+
       void main() {
         v_uv = a_uv;
         gl_Position = u_proj * u_view * u_model * vec4(a_pos, 1);
@@ -36,9 +227,13 @@ programs:
       layout(set = 1, binding = 0) uniform sampler2D u_tex;
       layout(location = 0) in vec2 v_uv;
       layout(location = 0) out vec4 o_col;
+
       void main() {
         o_col = texture(u_tex, v_uv);
       }
+
+environment:
+  texture: 7
 
 buffers:
   - id: 1
@@ -46,9 +241,32 @@ buffers:
 
 textures:
   - id: 1
+    format: png
+    space: srgb
     path: assets/BoomBoxWithAxes_baseColor.png
   - id: 2
+    format: png
+    path: assets/BoomBoxWithAxes_roughnessMetallic.png
+  - id: 3
+    format: png
+    path: assets/BoomBoxWithAxes_normal.png
+  - id: 4
+    format: png
+    space: srgb
+    path: assets/BoomBoxWithAxes_emissive.png
+  - id: 5
+    format: png
+    space: srgb
     path: assets/BoomBoxWithAxes_baseColor1.png
+  - id: 6
+    format: ktx
+    path: assets/field/diffuse.ktx2
+  - id: 7
+    format: ktx
+    path: assets/field/specular.ktx2
+  - id: 8
+    format: png
+    path: assets/ibl-lut.png
 
 materials:
   - id: 1
@@ -56,14 +274,62 @@ materials:
     textures:
       - location: 0
         texture: 1
+      - location: 1
+        texture: 2
+      - location: 2
+        texture: 3
+      - location: 3
+        texture: 4
+      - location: 4
+        texture: 6
+      - location: 5
+        texture: 7
+      - location: 6
+        texture: 8
   - id: 2
-    program: 1
+    program: 2
     textures:
       - location: 0
-        texture: 2
+        texture: 5
 
 meshes:
-  - name: CoordinateSystem
+  - id: 1
+    name: BoomBox
+    transform:
+      translation: [-1.490116E-09, 0.002062733, -0.000114740425]
+    material: 1
+    bindings:
+      - binding: 0
+        view:
+          buffer: 1
+          offset: 128700
+          size: 42900
+      - binding: 1
+        view:
+          buffer: 1
+          offset: 28600
+          size: 42900
+      - binding: 2
+        view:
+          buffer: 1
+          offset: 71500
+          size: 57200
+      - binding: 3
+        view:
+          buffer: 1
+          offset: 0
+          size: 28600
+    indices:
+      count: 18108
+      format: u16
+      view:
+        buffer: 1
+        offset: 171600
+        size: 36216
+  - id: 2
+    name: CoordinateSystem
+    transform:
+      translation: [-0.00319974, 0.0175339244, -0.00319973961]
     material: 2
     bindings:
       - binding: 0
@@ -83,7 +349,11 @@ meshes:
         buffer: 1
         offset: 249816
         size: 6840
-  - name: X_axis
+  - id: 3
+    name: X_axis
+    transform:
+      scale: [0.06, 0.06, 0.06]
+      translation: [-0.010767879, 0.0143326828, -5.5000196E-06]
     material: 2
     bindings:
       - binding: 0

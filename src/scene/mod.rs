@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 mod camera;
 mod definition;
 mod material;
+mod textures;
 
 struct Model {
     transform: Mat4,
@@ -27,6 +28,7 @@ struct Model {
 struct ViewUniforms {
     pub view: Mat4,
     pub proj: Mat4,
+    pub camera_position: Vec3,
 }
 
 pub struct SceneWatcher {
@@ -163,7 +165,7 @@ impl Scene {
         }
 
         let descriptor_pool = device::DescriptorPool::create(
-            3,
+            1 + scene.textures.len() as u32,
             &[
                 vk::DescriptorPoolSize {
                     ty: vk::DescriptorType::UNIFORM_BUFFER,
@@ -171,7 +173,7 @@ impl Scene {
                 },
                 vk::DescriptorPoolSize {
                     ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                    descriptor_count: 2,
+                    descriptor_count: scene.textures.len() as u32,
                 },
             ],
         )?;
@@ -182,48 +184,16 @@ impl Scene {
         for t in &scene.textures {
             paths.push(PathBuf::from(&t.path));
 
-            let (info, mut reader) =
-                png::Decoder::new(std::fs::File::open(&t.path)?).read_info()?;
-
-            let (texture_buffer, format) = match info.color_type {
-                // https://github.com/image-rs/image-png/issues/239
-                png::ColorType::RGB => {
-                    let texture_buffer_size = (info.width * info.height * 4) as usize;
-                    let texture_buffer = device::Buffer::create(
-                        texture_buffer_size as vk::DeviceSize,
-                        vk::BufferUsageFlags::TRANSFER_SRC,
-                    )?;
-                    let mut mapping = texture_buffer.memory.map(0, texture_buffer_size)?;
-                    let mut off = 0;
-                    println!(
-                        "expanding RGB -> RGBA: {}x{} = {:#x} bytes",
-                        info.width, info.height, texture_buffer_size
-                    );
-                    while let Some(row) = reader.next_row()? {
-                        for x in 0..info.width as usize {
-                            mapping.write_slice(off, &row[x * 3..x * 3 + 3]);
-                            mapping.write(off + 3, &0xffu8);
-                            off += 4;
-                        }
-                    }
-                    (texture_buffer, vk::Format::R8G8B8A8_UNORM)
-                }
-                png::ColorType::RGBA => {
-                    let texture_buffer_size = reader.output_buffer_size();
-                    let texture_buffer = device::Buffer::create(
-                        texture_buffer_size as vk::DeviceSize,
-                        vk::BufferUsageFlags::TRANSFER_SRC,
-                    )?;
-                    let mut mapping = texture_buffer.memory.map(0, texture_buffer_size)?;
-                    reader.next_frame(mapping.slice(0, texture_buffer_size))?;
-                    (texture_buffer, vk::Format::R8G8B8A8_UNORM)
-                }
-                _ => unimplemented!("png::ColorType::{:?}", info.color_type),
-            };
-
-            let texture = resources::Texture::create(info.width, info.height, format)?;
-            texture.copy_from(texture_buffer.as_raw(), 0)?;
-            textures.insert(t.id, texture);
+            textures.insert(
+                t.id,
+                match t.format {
+                    definition::TextureFormat::Ktx => textures::load_ktx(&t.path),
+                    definition::TextureFormat::Png => textures::load_png(
+                        &t.path,
+                        matches!(t.space, definition::TextureColorSpace::Srgb),
+                    ),
+                }?,
+            );
         }
 
         let view_set = descriptor_pool.allocate(view_descriptors_layout.as_raw())?;
@@ -286,7 +256,7 @@ impl Scene {
             }
             let index_buffer = buffer_view(&m.indices.view, vk::BufferUsageFlags::INDEX_BUFFER)?;
             models.push(Model {
-                transform: Mat4::IDENTITY,
+                transform: (&m.transform).into(),
                 material: m.material,
                 mesh: resources::MeshObject {
                     vertex_buffers,
@@ -305,7 +275,14 @@ impl Scene {
             device::size_of::<ViewUniforms>(),
         );
 
-        let camera = camera::Camera::<camera::PerspectiveProjection>::default();
+        let camera = camera::Camera {
+            transform: Default::default(),
+            projection: camera::PerspectiveProjection {
+                near: 0.00001,
+                far: 100.0,
+                ..Default::default()
+            },
+        };
 
         let scene = Self {
             programs,
@@ -331,7 +308,7 @@ impl Scene {
         let rotate_around = Quaternion::axis_angle(Vec3::Y_POS, elapsed.as_secs_f32() * 0.3);
         let rotate_down = Quaternion::axis_angle(Vec3::X_NEG, std::f32::consts::FRAC_PI_6);
         self.camera.transform.rotation = rotate_around * rotate_down;
-        self.camera.transform.position = rotate_around.rotate([0.0, 1.5, 4.0].into());
+        self.camera.transform.position = rotate_around.rotate([0.0, 0.02, 0.04].into());
     }
 
     pub fn render(&self, recorder: &device::CommandBufferRenderPassRecorder) -> Result<()> {
@@ -340,6 +317,7 @@ impl Scene {
             &ViewUniforms {
                 view: self.camera.transform.matrix(),
                 proj: self.camera.projection.matrix(),
+                camera_position: self.camera.transform.position,
             },
         )?;
 
@@ -357,7 +335,7 @@ impl Scene {
             // for each model
             recorder.push(
                 pipeline_layout,
-                vk::ShaderStageFlags::VERTEX,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 0,
                 &model.transform,
             );

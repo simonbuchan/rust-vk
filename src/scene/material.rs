@@ -43,7 +43,7 @@ impl MaterialProgram {
         let pipeline_layout = device::PipelineLayout::create(
             &[view_descriptors_layout, descriptors_layout.as_raw()],
             &[vk::PushConstantRange {
-                stage_flags: vk::ShaderStageFlags::VERTEX,
+                stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 offset: 0,
                 size: std::mem::size_of::<Mat4>() as u32,
             }],

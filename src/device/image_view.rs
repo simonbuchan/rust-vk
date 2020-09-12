@@ -26,11 +26,20 @@ impl ImageView {
         format: vk::Format,
         aspect_mask: vk::ImageAspectFlags,
     ) -> VkResult<Self> {
+        Self::create(image, vk::ImageViewType::TYPE_2D, format, aspect_mask)
+    }
+
+    pub fn create(
+        image: vk::Image,
+        view_type: vk::ImageViewType,
+        format: vk::Format,
+        aspect_mask: vk::ImageAspectFlags,
+    ) -> VkResult<Self> {
         let owned = unsafe {
             Owned::create(
                 &vk::ImageViewCreateInfo::builder()
                     .image(image)
-                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .view_type(view_type)
                     .format(format)
                     .subresource_range(
                         vk::ImageSubresourceRange::builder()
